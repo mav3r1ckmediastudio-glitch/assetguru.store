@@ -66,5 +66,8 @@ export function apiError(error: unknown) {
   const message = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
   if (message === 'AUTH_REQUIRED') return { status: 401, message: 'Please sign in to continue.' };
   if (message === 'FORBIDDEN') return { status: 403, message: 'You do not have permission to perform this action.' };
-  return { status: 500, message: 'The request could not be completed.' };
+  const status = typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number'
+    ? error.status
+    : 500;
+  return { status, message: status < 500 && error instanceof Error ? error.message : 'The request could not be completed.' };
 }

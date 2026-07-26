@@ -66,10 +66,35 @@ export async function PATCH({ locals, request, params }: import('./$types').Requ
 
       const { data:vendor, error:vendorError } = await admin.from('vendor_profiles').select('user_id').eq('id', adminCase.vendor_id).maybeSingle();
       assertNoError(vendorError);
-      const notices = [
-        adminCase.buyer_id ? { user_id:adminCase.buyer_id, type:'refund', title:`Refund case ${body.status.toLowerCase()}`, body:`Case ${adminCase.case_number} is now ${body.status.toLowerCase()}.`, href:'/account/support', dedupe_key:`case:${adminCase.id}:buyer:${next}` } : null,
-        vendor?.user_id ? { user_id:vendor.user_id, type:'refund', title:`Refund case ${body.status.toLowerCase()}`, body:`Case ${adminCase.case_number} is now ${body.status.toLowerCase()}.`, href:'/creator/orders', dedupe_key:`case:${adminCase.id}:vendor:${next}` } : null
-      ].filter(Boolean);
+      type CaseNotice = {
+        user_id: string;
+        type: string;
+        title: string;
+        body: string;
+        href: string;
+        dedupe_key: string;
+      };
+      const notices: CaseNotice[] = [];
+      if (adminCase.buyer_id) {
+        notices.push({
+          user_id: adminCase.buyer_id,
+          type: 'refund',
+          title: `Refund case ${body.status.toLowerCase()}`,
+          body: `Case ${adminCase.case_number} is now ${body.status.toLowerCase()}.`,
+          href: '/account/support',
+          dedupe_key: `case:${adminCase.id}:buyer:${next}`
+        });
+      }
+      if (vendor?.user_id) {
+        notices.push({
+          user_id: vendor.user_id,
+          type: 'refund',
+          title: `Refund case ${body.status.toLowerCase()}`,
+          body: `Case ${adminCase.case_number} is now ${body.status.toLowerCase()}.`,
+          href: '/creator/orders',
+          dedupe_key: `case:${adminCase.id}:vendor:${next}`
+        });
+      }
       if (notices.length) assertNoError((await admin.from('notifications').upsert(notices, { onConflict:'dedupe_key' })).error);
     }
 

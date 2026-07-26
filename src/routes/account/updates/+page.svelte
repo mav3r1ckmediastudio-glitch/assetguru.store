@@ -1,8 +1,17 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
   import { getAsset } from '$lib/data/marketplace';
-  import { availableUpdates, dismissUpdate, entitlements, recordDownload } from '$lib/stores/buyer';
-  $: current=$entitlements.flatMap((entry)=>{const asset=getAsset(entry.slug);return asset&&asset.version===entry.purchasedVersion?[{...entry,asset}]:[];});
+  import { availableUpdates, dismissUpdate, entitlements, recordDownload, type BuyerEntitlementWithAsset } from '$lib/stores/buyer';
+
+  let current: BuyerEntitlementWithAsset[] = [];
+  $: {
+    const items: BuyerEntitlementWithAsset[] = [];
+    for (const entry of $entitlements) {
+      const asset = getAsset(entry.slug);
+      if (asset && asset.version === entry.purchasedVersion) items.push({ ...entry, asset });
+    }
+    current = items;
+  }
 </script>
 <svelte:head><title>Product updates — AssetGuru</title></svelte:head>
 <header class="page-head"><div><span class="eyebrow">Compatibility watch</span><h1>Product <span class="gradient-text">updates.</span></h1><p>See exactly what changed before bringing a new asset version into your GameGuru MAX project.</p></div><a class="button button-secondary" href="/library"><Icon name="library" size={18}/> Open library</a></header>

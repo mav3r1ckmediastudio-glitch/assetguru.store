@@ -25,7 +25,9 @@ export async function POST({locals,request,params}:import('./$types').RequestEve
     const {user}=await requireRole(locals,['vendor']);
     const body=createSchema.parse(await request.json());
     const admin=getSupabaseAdmin();
-    const {data:vendor}=await admin.from('vendor_profiles').select('*').eq('user_id',user.id).single();
+    const {data:vendor,error:vendorError}=await admin.from('vendor_profiles').select('*').eq('user_id',user.id).single();
+    if(vendorError)throw vendorError;
+    if(!vendor)throw Object.assign(new Error('Vendor profile not found.'),{status:404});
     if(vendor.status!=='approved'||!vendor.stripe_payouts_enabled)return json({message:'Vendor approval and completed Stripe onboarding are required.'},{status:403});
     const {data:product}=await admin.from('products').select('id,slug,status').eq('vendor_id',vendor.id).eq('slug',params.slug).maybeSingle();
     if(!product)return json({message:'Product not found.'},{status:404});
@@ -69,7 +71,9 @@ export async function PATCH({locals,request,params}:import('./$types').RequestEv
     const {user}=await requireRole(locals,['vendor']);
     const body=completeSchema.parse(await request.json());
     const admin=getSupabaseAdmin();
-    const {data:vendor}=await admin.from('vendor_profiles').select('id').eq('user_id',user.id).single();
+    const {data:vendor,error:vendorError}=await admin.from('vendor_profiles').select('id').eq('user_id',user.id).single();
+    if(vendorError)throw vendorError;
+    if(!vendor)throw Object.assign(new Error('Vendor profile not found.'),{status:404});
     const {data:product}=await admin.from('products').select('id').eq('vendor_id',vendor.id).eq('slug',params.slug).maybeSingle();
     if(!product)return json({message:'Product not found.'},{status:404});
     const {data:version}=await admin.from('product_versions').select('*').eq('id',body.versionId).eq('product_id',product.id).maybeSingle();

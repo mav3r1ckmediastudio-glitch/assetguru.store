@@ -9,24 +9,28 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "verify": "node scripts/verify-source.mjs",
-    "db:types": "supabase gen types typescript --local > src/lib/types/database.generated.ts"
+    "db:types": "npx supabase gen types typescript --project-id YOUR_PROJECT_REF > src/lib/types/database.generated.ts",
+    "verify:fixes": "node scripts/verify-error-fixes.mjs"
   },
   "devDependencies": {
-    "@sveltejs/adapter-netlify": "^6.0.4",
-    "@sveltejs/kit": "^2.70.1",
-    "@sveltejs/vite-plugin-svelte": "^7.2.0",
-    "@tailwindcss/vite": "^4.3.3",
-    "svelte": "^5.56.8",
-    "svelte-check": "^4.7.3",
-    "tailwindcss": "^4.3.3",
-    "typescript": "^6.0.3",
-    "vite": "^8.1.5",
-    "supabase": "^2.109.1"
+    "@sveltejs/adapter-netlify": "6.0.4",
+    "@sveltejs/kit": "2.70.1",
+    "@sveltejs/vite-plugin-svelte": "7.2.0",
+    "@tailwindcss/vite": "4.3.3",
+    "svelte": "5.56.8",
+    "svelte-check": "4.7.3",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3",
+    "vite": "8.1.5"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.12.3",
-    "@supabase/supabase-js": "^2.110.8",
-    "stripe": "^22.3.2",
-    "zod": "^4.4.3"
+    "@supabase/ssr": "0.12.3",
+    "@supabase/supabase-js": "2.110.8",
+    "stripe": "22.3.2",
+    "zod": "4.4.3"
+  },
+  "engines": {
+    "node": ">=22 <25",
+    "npm": ">=10"
   }
 }

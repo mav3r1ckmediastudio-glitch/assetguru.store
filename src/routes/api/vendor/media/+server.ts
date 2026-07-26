@@ -19,7 +19,9 @@ async function objectExists(bucket:string,path:string) {
 export async function POST({locals,request}:import('./$types').RequestEvent) {
   try {
     const {user}=await requireRole(locals,['vendor']); const body=requestSchema.parse(await request.json()); const admin=getSupabaseAdmin();
-    const {data:vendor}=await admin.from('vendor_profiles').select('id').eq('user_id',user.id).single();
+    const {data:vendor,error:vendorError}=await admin.from('vendor_profiles').select('id').eq('user_id',user.id).single();
+    if(vendorError)throw vendorError;
+    if(!vendor)throw Object.assign(new Error('Vendor profile not found.'),{status:404});
     const limit=body.kind==='avatar'?5*1024*1024:15*1024*1024; if(body.file.size>limit)return json({message:`The ${body.kind} exceeds the upload limit.`},{status:400});
     const path=`${vendor.id}/${body.kind}/${crypto.randomUUID()}-${safe(body.file.name)}`; const bucket=bucketFor(body.kind);
     const {data,error}=await admin.storage.from(bucket).createSignedUploadUrl(path,{upsert:false}); if(error||!data)throw error??new Error('SIGNED_UPLOAD_FAILED');
@@ -31,7 +33,9 @@ export async function POST({locals,request}:import('./$types').RequestEvent) {
 export async function PATCH({locals,request}:import('./$types').RequestEvent) {
   try {
     const {user}=await requireRole(locals,['vendor']); const body=completeSchema.parse(await request.json()); const admin=getSupabaseAdmin();
-    const {data:vendor}=await admin.from('vendor_profiles').select('id,avatar_path,banner_path').eq('user_id',user.id).single();
+    const {data:vendor,error:vendorError}=await admin.from('vendor_profiles').select('id,avatar_path,banner_path').eq('user_id',user.id).single();
+    if(vendorError)throw vendorError;
+    if(!vendor)throw Object.assign(new Error('Vendor profile not found.'),{status:404});
     if(!body.path.startsWith(`${vendor.id}/${body.kind}/`))return json({message:'Invalid storefront media path.'},{status:403});
     const bucket=bucketFor(body.kind); if(!(await objectExists(bucket,body.path)))return json({message:'The image upload did not complete.'},{status:409});
     const column=body.kind==='avatar'?'avatar_path':'banner_path'; const oldPath=body.kind==='avatar'?vendor.avatar_path:vendor.banner_path;

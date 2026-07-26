@@ -1,6 +1,6 @@
 import { derived, writable } from 'svelte/store';
 import { apiRequest } from '$lib/api';
-import { getAsset } from '$lib/data/marketplace';
+import { getAsset, type Asset } from '$lib/data/marketplace';
 import { defaultBuyerProfile, type BuyerProfile, type BuyerOrder, type BuyerReview, type DownloadEvent, type SupportTicket } from '$lib/data/buyer';
 import { hydrateFavourites, showToast } from '$lib/stores/marketplace';
 
@@ -13,22 +13,65 @@ export const dismissedUpdates = writable<string[]>([]);
 export const buyerNotifications = writable<any[]>([]);
 export const buyerLoaded = writable(false);
 
-export const entitlements = derived(buyerOrders, ($orders) => {
-  const owned = new Map<string,{slug:string; licence:'standard'|'extended'; purchasedVersion:string; purchasedAt:string; orderId:string; versionId?:string}>();
+export type BuyerEntitlement = {
+  slug: string;
+  licence: 'standard' | 'extended';
+  purchasedVersion: string;
+  purchasedAt: string;
+  orderId: string;
+  versionId?: string;
+};
+
+export type BuyerEntitlementWithAsset = BuyerEntitlement & { asset: Asset };
+export type BuyerAvailableUpdate = BuyerEntitlementWithAsset & { latestVersion: string };
+
+export const entitlements = derived(buyerOrders, ($orders): BuyerEntitlement[] => {
+  const owned = new Map<string, BuyerEntitlement>();
   for (const order of [...$orders].sort((a,b)=>b.timestamp-a.timestamp)) {
     if (!['Complete','Partially refunded'].includes(order.status)) continue;
-    for (const item of order.items) if (!item.refunded && !owned.has(item.slug)) owned.set(item.slug,{slug:item.slug,licence:item.licence,purchasedVersion:item.version,purchasedAt:order.date,orderId:order.id,versionId:item.versionId});
+    for (const item of order.items) {
+      if (!item.refunded && !owned.has(item.slug)) {
+        owned.set(item.slug, {
+          slug: item.slug,
+          licence: item.licence,
+          purchasedVersion: item.version,
+          purchasedAt: order.date,
+          orderId: order.id,
+          versionId: item.versionId
+        });
+      }
+    }
   }
   return [...owned.values()];
 });
-export const availableUpdates = derived([entitlements,dismissedUpdates], ([$entitlements,$dismissed]) => $entitlements.flatMap((entry)=>{
-  const asset=getAsset(entry.slug);
-  return asset && asset.version !== entry.purchasedVersion && !$dismissed.includes(`${entry.slug}:${asset.version}`) ? [{...entry,latestVersion:asset.version}] : [];
-}));
-export const pendingReviewAssets = derived([entitlements,buyerReviews], ([$entitlements,$reviews]) => {
-  const reviewed=new Set($reviews.map((review)=>review.slug));
-  return $entitlements.filter((entry)=>!reviewed.has(entry.slug));
-});
+
+export const availableUpdates = derived(
+  [entitlements, dismissedUpdates],
+  ([$entitlements, $dismissed]): BuyerAvailableUpdate[] => {
+    const updates: BuyerAvailableUpdate[] = [];
+    for (const entry of $entitlements) {
+      const asset = getAsset(entry.slug);
+      if (!asset || asset.version === entry.purchasedVersion) continue;
+      if ($dismissed.includes(`${entry.slug}:${asset.version}`)) continue;
+      updates.push({ ...entry, latestVersion: asset.version, asset });
+    }
+    return updates;
+  }
+);
+
+export const pendingReviewAssets = derived(
+  [entitlements, buyerReviews],
+  ([$entitlements, $reviews]): BuyerEntitlementWithAsset[] => {
+    const reviewed = new Set($reviews.map((review) => review.slug));
+    const pending: BuyerEntitlementWithAsset[] = [];
+    for (const entry of $entitlements) {
+      if (reviewed.has(entry.slug)) continue;
+      const asset = getAsset(entry.slug);
+      if (asset) pending.push({ ...entry, asset });
+    }
+    return pending;
+  }
+);
 
 export async function loadBuyerData(force=false) {
   let loaded=false; buyerLoaded.subscribe(v=>loaded=v)(); if(loaded&&!force)return;

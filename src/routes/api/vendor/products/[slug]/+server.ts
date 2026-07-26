@@ -24,10 +24,13 @@ export async function PATCH({locals,request,params}:import('./$types').RequestEv
     const {user}=await requireRole(locals,['vendor']);
     const body=schema.parse(await request.json());
     const admin=getSupabaseAdmin();
-    const [{data:vendor},{data:settings}]=await Promise.all([
+    const [{data:vendor,error:vendorError},{data:settings,error:settingsError}]=await Promise.all([
       admin.from('vendor_profiles').select('*').eq('user_id',user.id).single(),
       admin.from('marketplace_settings').select('*').eq('id',1).single()
     ]);
+    if(vendorError)throw vendorError;
+    if(settingsError)throw settingsError;
+    if(!vendor)throw Object.assign(new Error('Vendor profile not found.'),{status:404});
     const {data:product}=await admin.from('products').select(`*,category:categories(name),images:product_images(storage_path,sort_order),versions:product_versions(id,version,is_current,status,package_path,documentation_path,file_size_bytes,release_notes,created_at)`).eq('vendor_id',vendor.id).eq('slug',params.slug).single();
     if(!product)return json({message:'Product not found.'},{status:404});
 
@@ -74,7 +77,9 @@ export async function PATCH({locals,request,params}:import('./$types').RequestEv
 export async function DELETE({locals,request,params}:import('./$types').RequestEvent){
   try{
     const {user}=await requireRole(locals,['vendor']);const admin=getSupabaseAdmin();
-    const {data:vendor}=await admin.from('vendor_profiles').select('id').eq('user_id',user.id).single();
+    const {data:vendor,error:vendorError}=await admin.from('vendor_profiles').select('id').eq('user_id',user.id).single();
+    if(vendorError)throw vendorError;
+    if(!vendor)throw Object.assign(new Error('Vendor profile not found.'),{status:404});
     const {data:product}=await admin.from('products').select(`id,status,sales_count,images:product_images(storage_path),versions:product_versions(package_path,documentation_path)`).eq('vendor_id',vendor.id).eq('slug',params.slug).single();
     if(!product)return json({message:'Product not found.'},{status:404});
     if(product.sales_count>0||!['draft','changes_requested','rejected'].includes(product.status))return json({message:'Only unsold drafts can be deleted. Retire published products instead.'},{status:409});
