@@ -45,7 +45,7 @@
             {/each}
           </ol>
         {:else}
-          <div class="empty-side"><Icon name="store" size={23}/><span><b>Creators coming soon</b><small>Approved studios will appear here.</small></span></div>
+          <div class="empty-side"><Icon name="store" size={23}/><span><b>Sell on AssetGuru</b><small>Create a professional storefront for your GameGuru MAX assets.</small></span></div>
         {/if}
       </section>
       {#if saleAsset}
@@ -55,9 +55,9 @@
           <div><small>Current offer</small><strong>{saleAsset.title}</strong><span><b>£{saleAsset.price.toFixed(2)}</b><s>£{saleAsset.oldPrice?.toFixed(2)}</s></span></div>
         </a>
       {:else}
-        <a class="deal glass" href="/marketplace">
-          <img src="/images/marketplace-grid.webp" alt=""/>
-          <div><small>Launch catalogue</small><strong>Ready for the first GameGuru MAX releases</strong><span><b>{$assets.length}</b><s>live assets</s></span></div>
+        <a class="deal launch-deal glass" href="/auth/signup?role=vendor">
+          <div class="launch-deal-mark"><Icon name="upload" size={30}/></div>
+          <div><small>Creator marketplace</small><strong>Turn your GameGuru MAX work into a storefront</strong><span><b>Sell assets</b><s>Creator tools included</s></span></div>
         </a>
       {/if}
     </aside>
@@ -75,36 +75,42 @@
   </div>
 </section>
 
-<section class="section">
-  <div class="content-wrap">
-    <SectionHeading eyebrow="Find your building blocks" title="Browse categories" description="Everything from a single prop to a complete playable framework, organised around how GameGuru MAX creators actually build." link="View all categories" href="/categories"/>
-    <div class="categories-grid">
-      {#each $categories as category}<CategoryCard {category}/>{/each}
+{#if $categories.length}
+  <section class="section">
+    <div class="content-wrap">
+      <SectionHeading eyebrow="Find your building blocks" title="Browse categories" description="Everything from a single prop to a complete playable framework, organised around how GameGuru MAX creators actually build." link="View all categories" href="/categories"/>
+      <div class="categories-grid">
+        {#each $categories as category}<CategoryCard {category}/>{/each}
+      </div>
     </div>
-  </div>
-</section>
+  </section>
+{/if}
 
-<section class="section featured-section">
-  <div class="content-wrap">
-    <SectionHeading eyebrow="Curated this week" title="Featured assets" description="Fresh releases, proven bestsellers and staff picks with clear compatibility information." link="Browse marketplace" href="/marketplace"/>
-    <div class="assets-grid">
-      {#each $featuredAssets.slice(0, 5) as asset}<AssetCard {asset}/>{/each}
+{#if $featuredAssets.length}
+  <section class="section featured-section">
+    <div class="content-wrap">
+      <SectionHeading eyebrow="Curated this week" title="Featured assets" description="Fresh releases, proven bestsellers and staff picks with clear compatibility information." link="Browse marketplace" href="/marketplace"/>
+      <div class="assets-grid">
+        {#each $featuredAssets.slice(0, 5) as asset}<AssetCard {asset}/>{/each}
+      </div>
     </div>
-  </div>
-</section>
+  </section>
+{/if}
 
-<section class="section collection-section">
-  <div class="content-wrap collection glass">
-    <div class="collection-art"><img src={collectionAsset?.image ?? '/images/marketplace-grid.webp'} alt="GameGuru MAX marketplace collection"/></div>
-    <div class="collection-copy">
-      <span class="eyebrow">{collectionAsset ? 'Featured release' : 'Launch-ready marketplace'}</span>
-      <h2>{collectionAsset?.title ?? 'The catalogue starts clean.'}</h2>
-      <p>{collectionAsset?.summary ?? 'AssetGuru is fully configured for real creator submissions. Approved assets will appear here as the launch catalogue is built.'}</p>
-      <div class="collection-stats"><span><b>{$assets.length}</b> live assets</span><span><b>{$creators.length}</b> approved creators</span><span><b>{collectionAsset?.maxVersion ?? 'MAX'}</b> compatibility</span></div>
-      <a class="button button-promo" href={collectionAsset ? `/marketplace/${collectionAsset.slug}` : '/marketplace'}>{collectionAsset ? 'View featured asset' : 'Explore marketplace'} <Icon name="arrow" size={18}/></a>
+{#if collectionAsset}
+  <section class="section collection-section">
+    <div class="content-wrap collection glass">
+      <div class="collection-art"><img src={collectionAsset.image} alt={collectionAsset.title}/></div>
+      <div class="collection-copy">
+        <span class="eyebrow">Featured release</span>
+        <h2>{collectionAsset.title}</h2>
+        <p>{collectionAsset.summary}</p>
+        <div class="collection-stats"><span><b>{$assets.length}</b> live assets</span><span><b>{$creators.length}</b> approved creators</span><span><b>{collectionAsset.maxVersion}</b> compatibility</span></div>
+        <a class="button button-promo" href={`/marketplace/${collectionAsset.slug}`}>View featured asset <Icon name="arrow" size={18}/></a>
+      </div>
     </div>
-  </div>
-</section>
+  </section>
+{/if}
 
 <section class="section creator-cta-section">
   <div class="content-wrap creator-cta">
@@ -141,7 +147,7 @@
   li { min-height: 54px; display: grid; grid-template-columns: 16px 34px 1fr auto; gap: 9px; align-items: center; border-top: 1px solid #122a43; }
   li > b { color: #ffc857; font-size: 11px; }li img { width: 34px; height: 34px; border-radius: 50%; }li > span { display: grid; gap: 2px; min-width: 0; }li strong { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }li small { color: #718096; font-size: 9px; }li em { display: grid; justify-items: end; color: #f5f8ff; font-size: 10px; font-style: normal; }li em small { margin-top: 2px; }
   .deal { position: relative; min-height: 210px; overflow: hidden; border-radius: 16px; }
-  .deal > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: brightness(.6) saturate(1.2); }.deal::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgb(3 7 17 / .92), rgb(3 7 17 / .05)); }
+  .deal > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: brightness(.6) saturate(1.2); }.deal::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgb(3 7 17 / .92), rgb(3 7 17 / .05)); }.launch-deal{background:radial-gradient(circle at 78% 20%,rgb(0 229 255/.16),transparent 38%),linear-gradient(135deg,#071329,#090b1d)}.launch-deal::before{content:'';position:absolute;inset:0;opacity:.22;background-image:linear-gradient(#27547a 1px,transparent 1px),linear-gradient(90deg,#27547a 1px,transparent 1px);background-size:28px 28px}.launch-deal-mark{position:absolute!important;z-index:2!important;top:22px!important;left:22px!important;right:auto!important;bottom:auto!important;width:58px;height:58px;display:grid!important;place-items:center;border:1px solid rgb(0 229 255/.35);border-radius:16px;color:#00e5ff;background:rgb(0 229 255/.07)}
   .deal > div { position: absolute; z-index: 2; left: 20px; right: 20px; bottom: 18px; display: grid; gap: 7px; }.deal strong { max-width: 190px; font-size: 19px; line-height: 1.05; text-transform: uppercase; }.deal div span { display: flex; align-items: baseline; gap: 8px; }.deal div b { color: #00e5ff; font-size: 19px; }.deal s { color: #718096; font-size: 11px; }
   .discount { position: absolute; z-index: 3; top: 12px; right: 12px; padding: 6px 9px; border-radius: 7px; color: #260016; background: #ff3fd8; font-weight: 900; font-size: 12px; }
   .trust-strip { margin-top: 22px; border-block: 1px solid #122a43; background: rgb(5 10 22 / .66); }.trust-grid { min-height: 92px; display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; }.trust-grid > div { display: flex; align-items: center; justify-content: center; gap: 13px; color: #8b5cf6; }.trust-grid > div + div { border-left: 1px solid #183352; }.trust-grid span { display: grid; gap: 2px; }.trust-grid strong { color: #f5f8ff; font-size: 13px; }.trust-grid small { color: #718096; font-size: 11px; }
