@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-label="Industrial Complex">
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#02040d"/><stop offset=".55" stop-color="#071329"/><stop offset="1" stop-color="#120824"/></linearGradient>
+      <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#718096"/><stop offset="1" stop-color="#4d7cff"/></linearGradient>
+      <radialGradient id="glow"><stop stop-color="#718096" stop-opacity=".45"/><stop offset="1" stop-color="#718096" stop-opacity="0"/></radialGradient>
+      <filter id="soft"><feGaussianBlur stdDeviation="24"/></filter>
+    </defs>
+    <rect width="1200" height="675" fill="url(#bg)"/>
+    <circle cx="260" cy="120" r="250" fill="url(#glow)" filter="url(#soft)"/>
+    <circle cx="980" cy="560" r="290" fill="url(#glow)" filter="url(#soft)" opacity=".65"/>
+    <g opacity=".18" stroke="#27547a"><path d="M0 90h1200M0 180h1200M0 270h1200M0 360h1200M0 450h1200M0 540h1200M120 0v675M240 0v675M360 0v675M480 0v675M600 0v675M720 0v675M840 0v675M960 0v675M1080 0v675"/></g>
+    <g fill="none" stroke="#718096" stroke-width="12" opacity=".85"><rect x="120" y="130" width="260" height="400"/><rect x="445" y="220" width="260" height="310"/><rect x="770" y="95" width="310" height="435"/><path d="M90 530h1020M160 190h180M490 280h170M820 155h210"/></g><g fill="#4d7cff"><circle cx="250" cy="330" r="65"/><circle cx="575" cy="380" r="48"/><circle cx="925" cy="300" r="78"/></g>
+    <rect x="28" y="28" width="1144" height="619" rx="34" fill="none" stroke="url(#g2)" stroke-width="4" opacity=".5"/>
+    </svg>
