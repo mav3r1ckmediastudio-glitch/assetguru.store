@@ -51,7 +51,7 @@
 <input class="hidden-file" bind:this={avatarInput} type="file" accept="image/jpeg,image/png,image/webp" onchange={(event)=>uploadMedia('avatar',selectedFile(event))}/><input class="hidden-file" bind:this={bannerInput} type="file" accept="image/jpeg,image/png,image/webp" onchange={(event)=>uploadMedia('banner',selectedFile(event))}/>
 
 <div class="editor-layout">
-  <aside class="sections glass">{#each sectionLinks as item}<button class:active={section===item.label} type="button" onclick={() => section=item.label}><Icon name={item.icon} size={17}/><span>{item.label}</span></button>{/each}<div class="profile-score"><span><b>{Math.round($creatorProfile.completion)}%</b><small>Profile complete</small></span><progress max="100" value={$creatorProfile.completion}></progress><p>Complete identity, support and Stripe details to reach 100%.</p></div></aside>
+  <aside class="sections glass">{#each sectionLinks as item}<button class:active={section===item.label} type="button" onclick={() => section=item.label}><Icon name={item.icon} size={17}/><span>{item.label}</span></button>{/each}<div class="profile-score"><span><b>{Math.round($creatorProfile.completion)}%</b><small>Profile complete</small></span><progress max="100" value={$creatorProfile.completion}></progress><p>{$creatorProfile.completion >= 100 ? 'Storefront complete. Stripe payouts are configured separately.' : 'Complete your identity, support and visual details to reach 100%.'}</p></div></aside>
 
   <main class="form-panel glass">
     {#if section==='Brand & profile'}

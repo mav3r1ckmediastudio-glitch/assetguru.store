@@ -25,7 +25,7 @@
       <a href={link.href} class:active={active(link.href)}><Icon name={link.icon} size={18}/><span>{link.label}</span>{#if link.href === '/creator/products'}<b>{$creatorProducts.length}</b>{/if}</a>
     {/each}
   </nav>
-  <div class="completion"><div><span>Store profile</span><b>{$creatorProfile.completion}%</b></div><progress max="100" value={$creatorProfile.completion}></progress><small>Complete your payout tax details to reach 100%.</small></div>
+  <div class="completion"><div><span>Storefront profile</span><b>{Math.round($creatorProfile.completion)}%</b></div><progress max="100" value={$creatorProfile.completion}></progress><small>{$creatorProfile.completion >= 100 ? 'Storefront complete. Payments are configured separately.' : 'Complete your public storefront details to reach 100%.'}</small></div>
   <a class="view-store" href={$creatorProfile.slug ? `/creators/${$creatorProfile.slug}` : "/creators"}><Icon name="eye" size={17}/> View public store</a>
 </aside>
 
