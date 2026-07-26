@@ -30,9 +30,9 @@
       </a>
     {/each}
     {#if $currentProfile?.role === 'vendor'}<a href="/creator" class:active={isActive('/creator')} aria-current={isActive('/creator') ? 'page' : undefined}><span class="icon"><Icon name="store" size={23}/></span><span>Creator</span></a>{/if}
-    {#if $currentProfile?.role === 'admin'}<a href="/admin" class:active={isActive('/admin')} aria-current={isActive('/admin') ? 'page' : undefined}><span class="icon"><Icon name="shield" size={23}/></span><span>Admin</span></a>{/if}
+    <a href={$currentProfile?.role === 'admin' ? '/admin' : '/auth/admin'} class:active={isActive('/admin') || isActive('/auth/admin')} aria-current={isActive('/admin') || isActive('/auth/admin') ? 'page' : undefined}><span class="icon"><Icon name="shield" size={23}/></span><span>Admin</span></a>
   </nav>
-  <a class="profile" href={$authUser ? ($currentProfile?.role === 'vendor' ? '/creator' : '/account') : '/auth/login'} title={$authUser ? 'Open account' : 'Sign in'}><span>{String($currentVendorProfile?.display_name ?? $currentProfile?.display_name ?? 'A').slice(0,1).toUpperCase()}</span><small>{$authUser ? String($currentVendorProfile?.display_name ?? $currentProfile?.display_name ?? 'Account').slice(0,10) : 'Sign in'}</small></a>
+  <a class="profile" href={$authUser ? ($currentProfile?.role === 'vendor' ? '/creator' : $currentProfile?.role === 'admin' ? '/admin' : '/account') : '/auth/login'} title={$authUser ? 'Open account' : 'Sign in'}><span>{String($currentVendorProfile?.display_name ?? $currentProfile?.display_name ?? 'A').slice(0,1).toUpperCase()}</span><small>{$authUser ? String($currentVendorProfile?.display_name ?? $currentProfile?.display_name ?? 'Account').slice(0,10) : 'Sign in'}</small></a>
 </aside>
 
 <style>
