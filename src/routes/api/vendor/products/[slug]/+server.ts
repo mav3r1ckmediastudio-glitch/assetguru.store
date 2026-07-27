@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { apiError, getSupabaseAdmin, requireRole, writeAudit } from '$lib/server/supabase';
 import { parseShowcaseVideoUrl } from '$lib/showcase-video';
+import { deleteR2Objects, isR2ObjectKey, verifyR2Object } from '$lib/server/r2-storage';
 
 const schema=z.object({
   title:z.string().trim().min(1).max(120).optional(),summary:z.string().trim().max(300).optional(),description:z.string().trim().max(12000).optional(),
@@ -14,10 +15,14 @@ const schema=z.object({
 const statusMap={Published:'published',Draft:'draft','In review':'in_review','Changes required':'changes_requested',Retired:'retired'} as const;
 const displayStatus=(status:string)=>({published:'Published',draft:'Draft',in_review:'In review',changes_requested:'Changes required',retired:'Retired',rejected:'Changes required'} as any)[status]??'Draft';
 
-async function objectExists(bucket:string,path:string){
+async function legacyObjectExists(bucket:string,path:string){
   const admin=getSupabaseAdmin();const parts=path.split('/');const name=parts.pop()!;const folder=parts.join('/');
   const {data,error}=await admin.storage.from(bucket).list(folder,{limit:10,search:name});if(error)throw error;
   return Boolean(data?.some(item=>item.name===name));
+}
+async function packageObjectExists(path:string,expectedBytes?:number){
+  if(isR2ObjectKey(path))return (await verifyR2Object(path,expectedBytes)).ok;
+  return legacyObjectExists('asset-packages',path);
 }
 
 export async function PATCH({locals,request,params}:import('./$types').RequestEvent){
@@ -63,9 +68,9 @@ export async function PATCH({locals,request,params}:import('./$types').RequestEv
         const effectiveCategory=body.category??product.category?.name??'';
         if(effectiveTitle.trim().length<5||effectiveSummary.trim().length<20||effectiveDescription.trim().length<60||!effectiveCategory)return json({message:'Complete the title, category, summary and description before submitting for review.'},{status:409});
         const latest=[...(product.versions??[])].sort((a:any,b:any)=>String(b.created_at).localeCompare(String(a.created_at)))[0];
-        if(!latest||!(await objectExists('asset-packages',latest.package_path)))return json({message:'Complete the asset package upload before submitting for review.'},{status:409});
-        if(latest.documentation_path&&!(await objectExists('asset-packages',latest.documentation_path)))return json({message:'The documentation upload is incomplete.'},{status:409});
-        for(const image of product.images??[])if(!(await objectExists('product-images',image.storage_path)))return json({message:'One or more preview uploads are incomplete.'},{status:409});
+        if(!latest||!(await packageObjectExists(latest.package_path,Number(latest.file_size_bytes))))return json({message:'Complete the asset package upload before submitting for review.'},{status:409});
+        if(latest.documentation_path&&!(await packageObjectExists(latest.documentation_path)))return json({message:'The documentation upload is incomplete.'},{status:409});
+        for(const image of product.images??[])if(!(await legacyObjectExists('product-images',image.storage_path)))return json({message:'One or more preview uploads are incomplete.'},{status:409});
       }
       patch.status=next;
     }
@@ -92,9 +97,12 @@ export async function DELETE({locals,request,params}:import('./$types').RequestE
     if(!product)return json({message:'Product not found.'},{status:404});
     if(product.sales_count>0||!['draft','changes_requested','rejected'].includes(product.status))return json({message:'Only unsold drafts can be deleted. Retire published products instead.'},{status:409});
     const imagePaths=((product.images??[]) as any[]).map(item=>item.storage_path).filter(Boolean);
-    const packagePaths=((product.versions??[]) as any[]).flatMap(item=>[item.package_path,item.documentation_path]).filter(Boolean);
+    const packagePaths=((product.versions??[]) as any[]).flatMap(item=>[item.package_path,item.documentation_path]).filter(Boolean) as string[];
+    const r2Paths=packagePaths.filter(isR2ObjectKey);
+    const legacyPaths=packagePaths.filter(path=>!isR2ObjectKey(path));
     if(imagePaths.length){const {error}=await admin.storage.from('product-images').remove(imagePaths);if(error)throw error;}
-    if(packagePaths.length){const {error}=await admin.storage.from('asset-packages').remove(packagePaths);if(error)throw error;}
+    if(r2Paths.length)await deleteR2Objects(r2Paths);
+    if(legacyPaths.length){const {error}=await admin.storage.from('asset-packages').remove(legacyPaths);if(error)throw error;}
     const {error}=await admin.from('products').delete().eq('id',product.id);if(error)throw error;
     await writeAudit({actorId:user.id,actorRole:'vendor',action:'product.deleted',entityType:'product',entityId:product.id,request});
     return json({ok:true});

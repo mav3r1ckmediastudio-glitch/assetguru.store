@@ -8,9 +8,11 @@
   import { platformSettings } from '$lib/stores/admin';
   import { apiRequest } from '$lib/api';
   import { getSupabaseBrowserClient } from '$lib/supabase/client';
+  import { uploadFileToR2, type R2BrowserUpload } from '$lib/r2-upload';
   import { parseShowcaseVideoUrl } from '$lib/showcase-video';
 
-  type UploadSpec={bucket:string;path:string;token:string;role:string;name:string;type:string;size:number};
+  type SupabaseUpload={storage:'supabase';bucket:string;path:string;token:string;role:string;name:string;type:string;size:number};
+  type UploadSpec=R2BrowserUpload|SupabaseUpload;
   type CategoryOption={id:string;name:string;slug:string;subcategories:string[]};
   let step=1, title='', category='', subcategory='', summary='', description='', dependencies='None', version='1.0.0';
   let price=19.99, extendedPrice=49.99, maxVersion:'2024+'|'2025+'|'2026+'|'Any MAX build'='2026+';
@@ -79,25 +81,45 @@
     if(completion<4||!packageFile||!documentationFile||previewFiles.length<3){showToast('Complete the package, presentation and pricing sections first','warning');return;}
     if(!agreed){step=5;showToast('Accept the creator declaration before submission','warning');return;}
     submitting=true;uploadProgress=0;
+    let createdSlug='';let createdVersionId='';let createdPreviewPaths:string[]=[];
     try{
-      const response=await apiRequest<{product:{slug:string};uploads:UploadSpec[];mode:'review'}>('/api/vendor/products',{method:'POST',body:JSON.stringify({
+      const response=await apiRequest<{product:{slug:string;currentVersionId:string};uploads:UploadSpec[];mode:'review'}>('/api/vendor/products',{method:'POST',body:JSON.stringify({
         title,summary,description,category,subcategory,price,extendedPrice,version,compatibility:'GameGuru MAX',maxVersion,sourceFiles,dependencies,performance,
         features:list(features),contents:list(contents),tags:list(tags),formats:list(formats),licence:'AssetGuru commercial licence',showcaseVideoUrl:showcaseVideo?.canonicalUrl??'',mode:'review',
         files:{package:descriptor(packageFile),documentation:descriptor(documentationFile),previews:previewFiles.map(descriptor)}
       })});
+      createdSlug=response.product.slug;createdVersionId=response.product.currentVersionId;createdPreviewPaths=response.uploads.filter((upload):upload is SupabaseUpload=>upload.storage==='supabase').map((upload)=>upload.path);
       const supabase=getSupabaseBrowserClient();
-      let done=0;
+      const loaded=new Map<string,number>();
+      const totalBytes=response.uploads.reduce((sum,upload)=>sum+upload.size,0);
+      const updateProgress=(role:string,bytes:number)=>{loaded.set(role,bytes);uploadProgress=Math.round([...loaded.values()].reduce((sum,value)=>sum+value,0)/Math.max(1,totalBytes)*100);};
       for(const upload of response.uploads){
         const file=fileForRole(upload.role);if(!file)throw new Error(`Missing file for ${upload.role}`);
-        const {error}=await supabase.storage.from(upload.bucket).uploadToSignedUrl(upload.path,upload.token,file,{contentType:file.type||upload.type});
-        if(error)throw error;done++;uploadProgress=Math.round(done/response.uploads.length*100);
+        if(upload.storage==='r2'){
+          await uploadFileToR2(upload,file,(bytes)=>updateProgress(upload.role,bytes));
+        }else{
+          const {error}=await supabase.storage.from(upload.bucket).uploadToSignedUrl(upload.path,upload.token,file,{contentType:file.type||upload.type});
+          if(error)throw error;updateProgress(upload.role,upload.size);
+        }
       }
-      await apiRequest(`/api/vendor/products/${response.product.slug}/complete`,{method:'POST',body:JSON.stringify({mode:'review'})});
+      await apiRequest(`/api/vendor/products/${response.product.slug}/complete`,{method:'POST',body:JSON.stringify({mode:'review',previewPaths:createdPreviewPaths})});
       await loadCreatorData(true);
       showToast(`${title} submitted for marketplace review`,'success');
       await goto('/creator/products');
-    }catch(error){showToast(error instanceof Error?error.message:'The asset could not be uploaded','warning');}
-    finally{submitting=false;}
+    }catch(error){
+      const message=error instanceof Error?error.message:'The asset could not be uploaded';
+      if(createdSlug){
+        if(createdVersionId){
+          try{await apiRequest(`/api/vendor/products/${createdSlug}/versions`,{method:'DELETE',body:JSON.stringify({versionId:createdVersionId})});}catch(cleanupError){console.error('Pending R2 upload cleanup failed',cleanupError);}
+        }
+        if(createdPreviewPaths.length){
+          try{await apiRequest(`/api/vendor/products/${createdSlug}/previews`,{method:'DELETE',body:JSON.stringify({paths:createdPreviewPaths})});}catch(cleanupError){console.error('Pending preview cleanup failed',cleanupError);}
+        }
+        await loadCreatorData(true);
+        showToast(`${message} Your private draft is safe; retry the package from Files & versions.`,'warning');
+        await goto(`/creator/products/${createdSlug}?tab=files`);
+      }else showToast(message,'warning');
+    }finally{submitting=false;}
   }
 </script>
 
@@ -112,7 +134,7 @@
 {#if step===1}
 <section class="panel glass"><div class="panel-title"><span>01</span><div><h2>Tell buyers what you made</h2><p>Strong titles and categories are the foundation of good discovery.</p></div></div><label>Product title <em>Required</em><input bind:value={title} placeholder="e.g. Modular Neon Backstreet Kit" maxlength="120"/><small>{title.length}/120 characters</small></label><div class="two"><label>Primary category <em>Required</em><select bind:value={category} disabled={categoriesLoading||Boolean(categoriesError)}><option value="" disabled>{categoriesLoading?'Loading categories…':'Select a category'}</option>{#each categoryOptions as item}<option value={item.name}>{item.name}</option>{/each}</select><small>Choose the broad marketplace section for this asset.</small></label><label>Subcategory <em>Required</em><select bind:value={subcategory} disabled={!category||categoriesLoading||Boolean(categoriesError)}><option value="" disabled>{category?'Select a subcategory':'Choose a primary category first'}</option>{#each subcategoryOptions as item}<option value={item}>{item}</option>{/each}</select><small>The subcategory controls more precise search and filtering.</small></label></div>{#if categoriesLoading}<div class="category-status"><Icon name="refresh" size={16}/><span><b>Preparing marketplace categories…</b><small>The approved AssetGuru taxonomy is being loaded.</small></span></div>{:else if categoriesError}<div class="category-status error"><Icon name="alert" size={16}/><span><b>Categories could not be loaded</b><small>{categoriesError}</small></span><button type="button" onclick={loadCategoryOptions}>Try again</button></div>{/if}<label>Short summary <em>Required</em><textarea bind:value={summary} rows="3" maxlength="300" placeholder="Explain the asset’s value in one useful sentence."></textarea><small>{summary.length}/300 characters · Minimum 20.</small></label><label>Search tags<input bind:value={tags} placeholder="modular, PBR, sci-fi"/><small>Separate tags with commas.</small></label></section>
 {:else if step===2}
-<section class="panel glass"><div class="panel-title"><span>02</span><div><h2>Upload the package</h2><p>Files use one-time signed upload tokens and private storage.</p></div></div><div class:complete={Boolean(packageFile)} class="dropzone"><Icon name={packageFile?'check':'upload'} size={36}/>{#if packageFile}<h3>{packageFile.name}</h3><p>{fileSize(packageFile.size)} · Ready for secure upload</p><button type="button" onclick={()=>packageInput.click()}>Replace package</button>{:else}<h3>Select your asset archive</h3><p>ZIP, 7Z or RAR. Large files upload directly to Supabase Storage.</p><button class="button button-primary" type="button" onclick={()=>packageInput.click()}>Choose package</button>{/if}</div><div class="two"><label>Release version <em>Required</em><input bind:value={version}/></label><label>Minimum GameGuru MAX version<select bind:value={maxVersion}><option value="2026+">MAX 2026+</option><option value="2025+">MAX 2025+</option><option value="2024+">MAX 2024+</option><option>Any MAX build</option></select></label></div><div class="two"><label>Dependencies<input bind:value={dependencies}/></label><label>Performance profile<select bind:value={performance}><option>Lightweight</option><option>Mid-range</option><option>High detail</option></select></label></div><label class="free-option"><input type="checkbox" bind:checked={sourceFiles}/><span><b>Source files included</b><small>Tell buyers whether editable source content is part of the package.</small></span></label><div class:complete={Boolean(documentationFile)} class="document-row"><Icon name={documentationFile?'check':'library'} size={23}/><span><b>{documentationFile?.name??'Attach documentation'}</b><small>Installation, dependencies and usage guidance are required.</small></span><button type="button" onclick={()=>docsInput.click()}>{documentationFile?'Replace':'Attach guide'}</button></div></section>
+<section class="panel glass"><div class="panel-title"><span>02</span><div><h2>Upload the package</h2><p>Files use one-time signed upload tokens and private storage.</p></div></div><div class:complete={Boolean(packageFile)} class="dropzone"><Icon name={packageFile?'check':'upload'} size={36}/>{#if packageFile}<h3>{packageFile.name}</h3><p>{fileSize(packageFile.size)} · Ready for secure upload</p><button type="button" onclick={()=>packageInput.click()}>Replace package</button>{:else}<h3>Select your asset archive</h3><p>ZIP, 7Z or RAR. Large files upload directly to private Cloudflare R2.</p><button class="button button-primary" type="button" onclick={()=>packageInput.click()}>Choose package</button>{/if}</div><div class="two"><label>Release version <em>Required</em><input bind:value={version}/></label><label>Minimum GameGuru MAX version<select bind:value={maxVersion}><option value="2026+">MAX 2026+</option><option value="2025+">MAX 2025+</option><option value="2024+">MAX 2024+</option><option>Any MAX build</option></select></label></div><div class="two"><label>Dependencies<input bind:value={dependencies}/></label><label>Performance profile<select bind:value={performance}><option>Lightweight</option><option>Mid-range</option><option>High detail</option></select></label></div><label class="free-option"><input type="checkbox" bind:checked={sourceFiles}/><span><b>Source files included</b><small>Tell buyers whether editable source content is part of the package.</small></span></label><div class:complete={Boolean(documentationFile)} class="document-row"><Icon name={documentationFile?'check':'library'} size={23}/><span><b>{documentationFile?.name??'Attach documentation'}</b><small>Installation, dependencies and usage guidance are required.</small></span><button type="button" onclick={()=>docsInput.click()}>{documentationFile?'Replace':'Attach guide'}</button></div></section>
 {:else if step===3}
 <section class="panel glass"><div class="panel-title"><span>03</span><div><h2>Make the quality obvious</h2><p>Upload at least three genuine in-engine preview images.</p></div><span class="counter">{previewFiles.length}/12 images{showcaseVideo?' · 1 video':''}</span></div><div class="media-grid">{#each previewFiles as file,index}<div><img src={URL.createObjectURL(file)} alt=""/><span>{index===0?'Cover image':`Preview ${index+1}`}</span><button aria-label="Remove preview" type="button" onclick={()=>previewFiles=previewFiles.filter((_,i)=>i!==index)}>×</button></div>{/each}<button class="media-add" type="button" onclick={()=>previewsInput.click()}><Icon name="plus" size={27}/><span>Select images</span><small>Minimum 3 previews</small></button></div><div class="video-field"><label>Showcase video <small>Optional · YouTube or Vimeo</small><input type="url" bind:value={showcaseVideoUrl} placeholder="https://www.youtube.com/watch?v=…"/></label>{#if showcaseVideo}<div class="video-preview"><iframe src={showcaseVideo.embedUrl} title={`${title||'Product'} showcase video`} loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe><span><b>{showcaseVideo.provider==='youtube'?'YouTube':'Vimeo'} preview ready</b><small>The video will be embedded on the public product page.</small></span></div>{:else if showcaseVideoError}<div class="video-error"><Icon name="alert" size={16}/><span>{showcaseVideoError}</span></div>{/if}</div><label>Full product description <em>Required</em><textarea bind:value={description} rows="9" placeholder="Describe included content, ideal use cases, technical quality and setup."></textarea><small>{description.length} characters · Minimum 60.</small></label><div class="two"><label>Key features<input bind:value={features} placeholder="Modular pieces, LODs, collisions"/></label><label>Package contents<input bind:value={contents} placeholder="42 meshes, 18 materials"/></label></div><label>File formats<input bind:value={formats} placeholder="FBX, PNG, WAV"/></label></section>
 {:else if step===4}

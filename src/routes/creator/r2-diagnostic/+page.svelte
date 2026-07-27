@@ -42,7 +42,7 @@
   <div>
     <span class="eyebrow">Staging diagnostic</span>
     <h1>Cloudflare R2 <span class="gradient-text">server check.</span></h1>
-    <p>This checks Netlify → R2 only. It does not upload a product, alter a draft or test the browser upload flow.</p>
+    <p>This checks Netlify → R2 using the same browser-compatible signed PUT used by creator packages. It does not alter a product or draft.</p>
   </div>
   <a class="button button-secondary" href="/creator/products"><Icon name="chevron" size={16}/> Back to products</a>
 </header>
@@ -52,7 +52,7 @@
   <div class="copy">
     <span class="eyebrow">Safe health check</span>
     <h2>Write, verify and remove one tiny private object</h2>
-    <p>The server creates a small text file in <code>__assetguru-health</code>, confirms its size with a HEAD request, then deletes it. Credentials and signed URLs are never displayed.</p>
+    <p>The server creates a small signed-upload test file in <code>r2/__assetguru-health</code>, confirms its size with a HEAD request, then deletes it. Credentials and signed URLs are never displayed.</p>
   </div>
   <button class="button button-primary" type="button" onclick={runCheck} disabled={running}>
     <Icon name={running ? 'clock' : 'spark'} size={17}/>
@@ -66,7 +66,7 @@
       <Icon name={result.ok ? 'check' : 'alert'} size={25}/>
       <div>
         <span class="eyebrow">{result.ok ? 'Passed' : 'Failed'}</span>
-        <h2>{result.ok ? 'Netlify can write to the private R2 bucket.' : result.code}</h2>
+        <h2>{result.ok ? 'R2 signed upload, verification and deletion all passed.' : result.code}</h2>
       </div>
     </div>
     {#if result.ok}

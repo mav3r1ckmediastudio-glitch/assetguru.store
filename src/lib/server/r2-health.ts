@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
-import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { createR2UploadTarget, makeR2ObjectKey } from '$lib/server/r2-storage';
 
 const REQUIRED_ENV = [
   'R2_ACCESS_KEY_ID',
@@ -184,8 +185,9 @@ export async function runR2ServerHealthCheck(userId: string): Promise<R2HealthRe
       secretAccessKey: config.secretAccessKey
     }
   });
-  const body = new TextEncoder().encode(`AssetGuru R2 server health check ${new Date().toISOString()}`);
-  const key = `__assetguru-health/server/${userId}/${crypto.randomUUID()}.txt`;
+  const body = `AssetGuru R2 signed upload health check ${new Date().toISOString()}`;
+  const bodyBytes = new TextEncoder().encode(body).byteLength;
+  const key = makeR2ObjectKey(['__assetguru-health', 'signed-upload', userId, `${crypto.randomUUID()}.txt`]);
   const totalStarted = performance.now();
   let created = false;
   let deleted = false;
@@ -195,22 +197,34 @@ export async function runR2ServerHealthCheck(userId: string): Promise<R2HealthRe
 
   try {
     let started = performance.now();
-    await client.send(new PutObjectCommand({
-      Bucket: config.bucket,
-      Key: key,
-      Body: body,
-      ContentType: 'text/plain; charset=utf-8',
-      Metadata: { purpose: 'assetguru-server-health-check' }
-    }), { abortSignal: AbortSignal.timeout(20_000) });
+    const target = createR2UploadTarget({
+      key,
+      role: 'health-check',
+      name: 'r2-signed-upload-check.txt',
+      type: 'text/plain; charset=utf-8',
+      size: bodyBytes
+    });
+    const putResponse = await fetch(target.url, {
+      method: target.method,
+      headers: target.headers,
+      body,
+      signal: AbortSignal.timeout(20_000)
+    });
+    if (!putResponse.ok) {
+      fail('R2_PRESIGNED_PUT_FAILED', `Cloudflare rejected the browser-compatible signed PUT with HTTP ${putResponse.status}.`, 503, {
+        httpStatus: putResponse.status,
+        providerCode: 'PresignedPutRejected'
+      });
+    }
     putMs = elapsed(started);
     created = true;
 
     started = performance.now();
     const head = await client.send(new HeadObjectCommand({ Bucket: config.bucket, Key: key }), { abortSignal: AbortSignal.timeout(20_000) });
     headMs = elapsed(started);
-    if (Number(head.ContentLength ?? -1) !== body.byteLength) {
+    if (Number(head.ContentLength ?? -1) !== bodyBytes) {
       fail('R2_HEAD_MISMATCH', 'R2 stored the test object, but the returned object size did not match.', 503, {
-        expectedBytes: body.byteLength,
+        expectedBytes: bodyBytes,
         actualBytes: Number(head.ContentLength ?? -1)
       });
     }
@@ -224,7 +238,7 @@ export async function runR2ServerHealthCheck(userId: string): Promise<R2HealthRe
       ok: true,
       bucket: config.bucket,
       endpointHost: config.endpointHost,
-      bytes: body.byteLength,
+      bytes: bodyBytes,
       timingsMs: { put: putMs, head: headMs, delete: deleteMs, total: elapsed(totalStarted) }
     };
   } catch (error) {
