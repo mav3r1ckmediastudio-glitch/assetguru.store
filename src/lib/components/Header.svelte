@@ -6,6 +6,9 @@
   import Icon from './Icon.svelte';
 
   let open = false;
+  let inAdmin = false;
+  $: inAdmin = page.url.pathname.startsWith('/admin');
+
   const links = [
     { href: '/marketplace', label: 'Marketplace' },
     { href: '/categories', label: 'Categories' },
@@ -26,18 +29,28 @@
     {/each}
   </nav>
   <div class="actions">
-    <a class="icon-button desktop-action" class:active={active('/favourites')} href="/favourites" aria-label="Favourites"><Icon name="heart" size={19}/></a>
-    <a class="icon-button desktop-action badge-wrap" class:active={active('/basket')} href="/basket" aria-label={`Basket, ${$cartCount} items`}><Icon name="cart" size={19}/>{#if $cartCount > 0}<span>{$cartCount}</span>{/if}</a>
-    {#if $authUser}<a class="icon-button desktop-action" class:active={active('/account/notifications')} href="/account/notifications" aria-label="Notifications"><Icon name="bell" size={19}/></a>{/if}
-    <a class="icon-button desktop-action" class:active={active('/account') || active('/library')} href={$authUser ? ($currentProfile?.role === 'vendor' ? '/creator' : $currentProfile?.role === 'admin' ? '/admin' : '/account') : '/auth/login'} aria-label="Account dashboard"><Icon name="user" size={19}/></a>
-    <a class="button button-secondary desktop-action admin-entry" class:active={active('/admin') || active('/auth/admin')} href={$currentProfile?.role === 'admin' ? '/admin' : '/auth/admin'} aria-label="Owner administration"><Icon name="shield" size={17}/> Admin</a>
-    {#if $authUser}
-      <a class="button button-secondary sign-in" href={$currentProfile?.role === 'vendor' ? '/creator' : $currentProfile?.role === 'admin' ? '/admin' : '/account'}>{$currentProfile?.role === 'vendor' ? 'Creator hub' : $currentProfile?.role === 'admin' ? 'Admin' : 'My account'}</a>
-      <a class="button button-secondary sign-out" href="/auth/logout">Sign out</a>
+    {#if inAdmin}
+      <a class="button button-secondary sign-out" href="/auth/logout">Sign out of admin</a>
     {:else}
-      <a class="button button-secondary sign-in" href="/auth/login">Sign in</a>
+      <a class="icon-button desktop-action" class:active={active('/favourites')} href="/favourites" aria-label="Favourites"><Icon name="heart" size={19}/></a>
+      <a class="icon-button desktop-action badge-wrap" class:active={active('/basket')} href="/basket" aria-label={`Basket, ${$cartCount} items`}><Icon name="cart" size={19}/>{#if $cartCount > 0}<span>{$cartCount}</span>{/if}</a>
+      {#if $authUser}<a class="icon-button desktop-action" class:active={active('/account/notifications')} href="/account/notifications" aria-label="Notifications"><Icon name="bell" size={19}/></a>{/if}
+      <a class="icon-button desktop-action" class:active={active('/account') || active('/library')} href={$authUser ? ($currentProfile?.role === 'admin' ? '/admin' : '/account') : '/auth/login'} aria-label="Buyer account"><Icon name="user" size={19}/></a>
+      <a class="button button-secondary desktop-action admin-entry" class:active={active('/admin') || active('/auth/admin')} href={$currentProfile?.role === 'admin' ? '/admin' : '/auth/admin'} aria-label="Owner administration"><Icon name="shield" size={17}/> Admin</a>
+      {#if $authUser}
+        {#if $currentProfile?.role === 'vendor'}
+          <a class="button button-secondary sign-in" href="/creator">Creator hub</a>
+        {:else if $currentProfile?.role !== 'admin'}
+          <a class="button button-secondary sign-in" href="/account">My account</a>
+        {/if}
+        <a class="button button-secondary sign-out" href="/auth/logout">Sign out</a>
+      {:else}
+        <a class="button button-secondary sign-in" href="/auth/login">Sign in</a>
+      {/if}
+      {#if $currentProfile?.role !== 'admin'}
+        <a class="button button-promo sell" href={$currentProfile?.role === 'vendor' ? '/creator' : '/auth/signup?role=vendor'}>{$currentProfile?.role === 'vendor' ? 'Creator hub' : 'Sell assets'}</a>
+      {/if}
     {/if}
-    <a class="button button-promo sell" href={$currentProfile?.role === 'vendor' ? '/creator' : '/auth/signup?role=vendor'}>{$currentProfile?.role === 'vendor' ? 'Creator hub' : 'Sell assets'}</a>
     <button class="icon-button menu" type="button" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} onclick={() => open = !open}>
       <Icon name={open ? 'close' : 'menu'} size={22}/>
     </button>
@@ -46,15 +59,28 @@
 
 {#if open}
   <div class="mobile-menu glass">
-    {#each links as link}
-      <a href={link.href} class:active={active(link.href)} onclick={() => open = false}>{link.label}</a>
-    {/each}
-    <a href="/favourites" onclick={() => open = false}>Favourites</a>
-    <a href="/basket" onclick={() => open = false}>Basket {#if $cartCount}({$cartCount}){/if}</a>
-    {#if $authUser}<a href="/account" onclick={() => open = false}>Buyer dashboard</a><a href="/account/notifications" onclick={() => open = false}>Notifications</a><a href="/library" onclick={() => open = false}>My library</a>{:else}<a href="/auth/login" onclick={() => open = false}>Sign in</a><a href="/auth/signup" onclick={() => open = false}>Create account</a>{/if}
-    <a href={$currentProfile?.role === 'admin' ? '/admin' : '/auth/admin'} onclick={() => open = false}>{$currentProfile?.role === 'admin' ? 'Admin control centre' : 'Owner administration'}</a>
-    <a class="button button-promo" href={$currentProfile?.role === 'vendor' ? '/creator' : '/auth/signup?role=vendor'} onclick={() => open = false}>{$currentProfile?.role === 'vendor' ? 'Open creator hub' : 'Become a creator'}</a>
-    {#if $authUser}<a href="/auth/logout" onclick={() => open = false}>Sign out</a>{/if}
+    {#if inAdmin}
+      <a href="/" onclick={() => open = false}>Return to marketplace</a>
+      <a href="/auth/logout" onclick={() => open = false}>Sign out of admin</a>
+    {:else}
+      {#each links as link}
+        <a href={link.href} class:active={active(link.href)} onclick={() => open = false}>{link.label}</a>
+      {/each}
+      <a href="/favourites" onclick={() => open = false}>Favourites</a>
+      <a href="/basket" onclick={() => open = false}>Basket {#if $cartCount}({$cartCount}){/if}</a>
+      {#if $authUser}
+        <a href="/account" onclick={() => open = false}>Buyer account</a>
+        {#if $currentProfile?.role === 'vendor'}<a href="/creator" onclick={() => open = false}>Creator hub</a>{/if}
+        <a href="/account/notifications" onclick={() => open = false}>Notifications</a>
+        <a href="/library" onclick={() => open = false}>My library</a>
+      {:else}
+        <a href="/auth/login" onclick={() => open = false}>Sign in</a>
+        <a href="/auth/signup" onclick={() => open = false}>Create account</a>
+      {/if}
+      <a href={$currentProfile?.role === 'admin' ? '/admin' : '/auth/admin'} onclick={() => open = false}>{$currentProfile?.role === 'admin' ? 'Admin control centre' : 'Owner administration'}</a>
+      {#if $currentProfile?.role !== 'admin'}<a class="button button-promo" href={$currentProfile?.role === 'vendor' ? '/creator' : '/auth/signup?role=vendor'} onclick={() => open = false}>{$currentProfile?.role === 'vendor' ? 'Open creator hub' : 'Become a creator'}</a>{/if}
+      {#if $authUser}<a href="/auth/logout" onclick={() => open = false}>Sign out</a>{/if}
+    {/if}
   </div>
 {/if}
 
