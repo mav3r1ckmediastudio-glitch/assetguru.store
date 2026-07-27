@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { apiError, getSupabaseAdmin, requireRole, writeAudit } from '$lib/server/supabase';
+import { taxonomyCategory } from '$lib/data/category-taxonomy';
 
 const baseFile=z.object({name:z.string().min(1).max(255),size:z.number().int().min(1),type:z.string().max(120).default('application/octet-stream')});
 const packageFile=baseFile.refine(file=>file.size<=5*1024**3,'Asset packages cannot exceed 5 GB.');
@@ -8,7 +9,7 @@ const documentationFile=baseFile.refine(file=>file.size<=250*1024**2,'Documentat
 const previewFile=baseFile.refine(file=>file.size<=15*1024**2,'Preview images cannot exceed 15 MB.').refine(file=>['image/jpeg','image/png','image/webp','image/gif'].includes(file.type),'Preview files must be JPG, PNG, WebP or GIF.');
 const schema=z.object({
   title:z.string().trim().min(5).max(120),summary:z.string().trim().min(20).max(300),description:z.string().trim().min(60).max(12000),
-  category:z.string().min(1),subcategory:z.string().max(100).default(''),price:z.number().min(0).max(9999),extendedPrice:z.number().min(0).max(24999),
+  category:z.string().min(1),subcategory:z.string().trim().min(1,'Choose a subcategory.').max(100),price:z.number().min(0).max(9999),extendedPrice:z.number().min(0).max(24999),
   version:z.string().trim().min(1).max(40),compatibility:z.string().max(120).default('GameGuru MAX'),maxVersion:z.enum(['2024+','2025+','2026+','Any MAX build']).default('Any MAX build'),
   sourceFiles:z.boolean().default(false),dependencies:z.string().max(300).default('None'),performance:z.enum(['Lightweight','Mid-range','High detail']).default('Mid-range'),
   features:z.array(z.string().max(180)).max(50).default([]),contents:z.array(z.string().max(180)).max(100).default([]),tags:z.array(z.string().max(50)).max(30).default([]),formats:z.array(z.string().max(30)).max(30).default([]),licence:z.string().max(200).default('Standard commercial licence'),
@@ -39,6 +40,8 @@ export async function POST({locals,request}:import('./$types').RequestEvent){
     const categoryQuery=admin.from('categories').select('id,name');
     const {data:category}=await (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(body.category)?categoryQuery.eq('id',body.category).maybeSingle():categoryQuery.eq('name',body.category).maybeSingle());
     if(!category)return json({message:'Choose a valid category.'},{status:400});
+    const taxonomy=taxonomyCategory(category.name);
+    if(!taxonomy||!taxonomy.subcategories.includes(body.subcategory))return json({message:'Choose a valid subcategory for the selected category.'},{status:400});
 
     let slug=slugify(body.title);
     const {data:existing}=await admin.from('products').select('id').eq('slug',slug).maybeSingle();
