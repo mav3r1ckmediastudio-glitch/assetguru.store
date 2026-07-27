@@ -80,6 +80,16 @@ function elapsed(started: number) {
   return Math.max(0, Math.round(performance.now() - started));
 }
 
+function safeProviderMessage(value: unknown) {
+  if (typeof value !== 'string') return undefined;
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (!compact) return undefined;
+  return compact
+    .replace(/https?:\/\/\S+/gi, '[endpoint hidden]')
+    .replace(/(X-Amz-[A-Za-z-]+)=([^&\s]+)/gi, '$1=[hidden]')
+    .slice(0, 280);
+}
+
 function classify(error: unknown): R2Failure {
   const current = error as {
     name?: string;
@@ -91,24 +101,52 @@ function classify(error: unknown): R2Failure {
   const name = current?.name ?? '';
   const httpStatus = current?.$metadata?.httpStatusCode;
   const networkCode = current?.cause?.code ?? current?.code;
+  const providerDetails = {
+    httpStatus,
+    providerCode: name || undefined,
+    providerMessage: safeProviderMessage(current?.message)
+  };
 
-  if (httpStatus === 403 || ['AccessDenied', 'InvalidAccessKeyId', 'SignatureDoesNotMatch'].includes(name)) {
-    const reason = name === 'InvalidAccessKeyId'
-      ? 'The R2 access key ID was rejected.'
-      : name === 'SignatureDoesNotMatch'
-        ? 'Cloudflare rejected the request signature. Check the secret key and endpoint.'
-        : 'The R2 credentials do not have permission to write to this bucket.';
-    const result = new Error(reason) as R2Failure;
+  if (name === 'InvalidAccessKeyId') {
+    const result = new Error('Cloudflare rejected the configured R2 access key ID.') as R2Failure;
+    result.code = 'R2_INVALID_ACCESS_KEY';
+    result.status = 503;
+    result.details = providerDetails;
+    return result;
+  }
+  if (name === 'SignatureDoesNotMatch') {
+    const result = new Error('Cloudflare rejected the request signature. The secret key, endpoint or request signing settings do not match.') as R2Failure;
+    result.code = 'R2_SIGNATURE_MISMATCH';
+    result.status = 503;
+    result.details = providerDetails;
+    return result;
+  }
+  if (name === 'NotEntitled') {
+    const result = new Error('Cloudflare reports that this account or credential is not entitled to use the requested R2 operation.') as R2Failure;
+    result.code = 'R2_NOT_ENTITLED';
+    result.status = 503;
+    result.details = providerDetails;
+    return result;
+  }
+  if (name === 'AccessDenied') {
+    const result = new Error('Cloudflare denied access to the configured R2 bucket.') as R2Failure;
     result.code = 'R2_ACCESS_DENIED';
     result.status = 503;
-    result.details = { httpStatus, providerCode: name || undefined };
+    result.details = providerDetails;
+    return result;
+  }
+  if (httpStatus === 403) {
+    const result = new Error('Cloudflare returned HTTP 403. The provider details below identify the exact reason.') as R2Failure;
+    result.code = 'R2_FORBIDDEN';
+    result.status = 503;
+    result.details = providerDetails;
     return result;
   }
   if (name === 'NoSuchBucket' || (httpStatus === 404 && name !== 'NotFound')) {
     const result = new Error('The configured R2 bucket could not be found. Check R2_BUCKET_NAME and the endpoint jurisdiction.') as R2Failure;
     result.code = 'R2_BUCKET_NOT_FOUND';
     result.status = 503;
-    result.details = { httpStatus, providerCode: name || undefined };
+    result.details = providerDetails;
     return result;
   }
   if (['ENOTFOUND', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT'].includes(String(networkCode))) {
@@ -123,7 +161,7 @@ function classify(error: unknown): R2Failure {
   const result = new Error('Cloudflare R2 rejected the server health check.') as R2Failure;
   result.code = 'R2_SERVER_CHECK_FAILED';
   result.status = 503;
-  result.details = { httpStatus, providerCode: name || undefined };
+  result.details = providerDetails;
   return result;
 }
 
