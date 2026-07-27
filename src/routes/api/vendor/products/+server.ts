@@ -16,6 +16,13 @@ const schema=z.object({
   features:z.array(z.string().max(180)).max(50).default([]),contents:z.array(z.string().max(180)).max(100).default([]),tags:z.array(z.string().max(50)).max(30).default([]),formats:z.array(z.string().max(30)).max(30).default([]),licence:z.string().max(200).default('Standard commercial licence'),showcaseVideoUrl:z.string().trim().max(500).default(''),
   mode:z.enum(['draft','review']),files:z.object({package:packageFile,documentation:documentationFile.optional(),previews:z.array(previewFile).min(1).max(12)})
 });
+const draftSchema=z.object({
+  mode:z.literal('draft'),title:z.string().trim().min(1,'Enter a product title before saving.').max(120),summary:z.string().trim().max(300).default(''),description:z.string().trim().max(12000).default(''),
+  category:z.string().trim().max(120).default(''),subcategory:z.string().trim().max(100).default(''),price:z.number().min(0).max(9999).default(0),extendedPrice:z.number().min(0).max(24999).optional(),
+  version:z.string().trim().max(40).default('1.0.0'),compatibility:z.string().max(120).default('GameGuru MAX'),maxVersion:z.enum(['2024+','2025+','2026+','Any MAX build']).default('Any MAX build'),
+  sourceFiles:z.boolean().default(false),dependencies:z.string().max(300).default('None'),performance:z.enum(['Lightweight','Mid-range','High detail']).default('Mid-range'),
+  features:z.array(z.string().max(180)).max(50).default([]),contents:z.array(z.string().max(180)).max(100).default([]),tags:z.array(z.string().max(50)).max(30).default([]),formats:z.array(z.string().max(30)).max(30).default([]),licence:z.string().max(200).default('Standard commercial licence'),showcaseVideoUrl:z.string().trim().max(500).default('')
+});
 const safe=(value:string)=>value.toLowerCase().replace(/[^a-z0-9._-]+/g,'-').replace(/^-+|-+$/g,'').slice(-150)||'file';
 const slugify=(value:string)=>value.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
 
@@ -23,7 +30,37 @@ export async function POST({locals,request}:import('./$types').RequestEvent){
   let createdProductId:string|undefined;
   try{
     const {user}=await requireRole(locals,['vendor']);
-    const body=schema.parse(await request.json());
+    const payload=await request.json();
+    if(payload?.mode==='draft'&&!payload?.files){
+      const body=draftSchema.parse(payload);
+      const showcaseVideo=body.showcaseVideoUrl?parseShowcaseVideoUrl(body.showcaseVideoUrl):null;
+      if(body.showcaseVideoUrl&&!showcaseVideo)return json({message:'Use a valid YouTube or Vimeo video URL.'},{status:400});
+      const admin=getSupabaseAdmin();
+      const [{data:vendor},{data:settings}]=await Promise.all([
+        admin.from('vendor_profiles').select('*').eq('user_id',user.id).single(),
+        admin.from('marketplace_settings').select('*').eq('id',1).single()
+      ]);
+      if(!vendor||vendor.status!=='approved')return json({message:'Your creator account must be approved before saving products.'},{status:403});
+      if(settings?.maintenance_mode)return json({message:'Vendor uploads are paused during maintenance.'},{status:503});
+      let category:null|{id:string;name:string}=null;
+      if(body.category){
+        const categoryQuery=admin.from('categories').select('id,name');
+        const {data,error}=await (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(body.category)?categoryQuery.eq('id',body.category).maybeSingle():categoryQuery.eq('name',body.category).maybeSingle());
+        if(error)throw error;if(!data)return json({message:'Choose a valid category.'},{status:400});category=data;
+        const taxonomy=taxonomyCategory(category.name);
+        if(body.subcategory&&(!taxonomy||!taxonomy.subcategories.includes(body.subcategory)))return json({message:'Choose a valid subcategory for the selected category.'},{status:400});
+      }
+      const pricePence=Math.round(body.price*100),extendedPence=Math.max(pricePence,Math.round((body.extendedPrice??body.price)*100));
+      let slug=slugify(body.title)||'draft';
+      const {data:existing}=await admin.from('products').select('id').eq('slug',slug).maybeSingle();
+      if(existing)slug=`${slug}-${crypto.randomUUID().slice(0,6)}`;
+      const {data:product,error:productError}=await admin.from('products').insert({vendor_id:vendor.id,category_id:category?.id??null,slug,title:body.title,subcategory:category?body.subcategory:'',summary:body.summary,description:body.description,price_pence:pricePence,extended_price_pence:extendedPence,status:'draft',compatibility:body.compatibility,max_version:body.maxVersion,source_files:body.sourceFiles,dependencies:body.dependencies,performance:body.performance,features:body.features,contents:body.contents,tags:body.tags,formats:body.formats,licence:body.licence,...(showcaseVideo?{showcase_video_url:showcaseVideo.canonicalUrl}:{})}).select('*').single();
+      if(productError)throw productError;createdProductId=product.id;
+      await writeAudit({actorId:user.id,actorRole:'vendor',action:'product.draft_created',entityType:'product',entityId:product.id,metadata:{slug,metadataOnly:true},request});
+      createdProductId=undefined;
+      return json({product:{id:product.id,slug,title:product.title,image:'/images/marketplace-grid.webp',category:category?.name??'Uncategorised',status:'Draft',price:body.price,extendedPrice:extendedPence/100,sales:0,revenue:0,views:0,conversion:0,rating:0,reviews:0,version:body.version||'1.0.0',updated:'Just now',summary:body.summary,description:body.description,compatibility:body.compatibility,maxVersion:body.maxVersion,sourceFiles:body.sourceFiles,dependencies:body.dependencies,performance:body.performance,features:body.features,contents:body.contents,tags:body.tags,formats:body.formats,licence:body.licence,showcaseVideoUrl:showcaseVideo?.canonicalUrl,images:[],versions:[]},uploads:[],mode:'draft'});
+    }
+    const body=schema.parse(payload);
     const showcaseVideo=body.showcaseVideoUrl?parseShowcaseVideoUrl(body.showcaseVideoUrl):null;
     if(body.showcaseVideoUrl&&!showcaseVideo)return json({message:'Use a valid YouTube or Vimeo video URL.'},{status:400});
     const admin=getSupabaseAdmin();

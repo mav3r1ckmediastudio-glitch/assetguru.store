@@ -36,9 +36,12 @@
 
   async function save(){
     if(!product)return;
+    if(!title.trim()){showToast('Enter a product title before saving','warning');tab='Overview';return;}
     if(extendedPrice<price){showToast('Extended licence price cannot be below the standard price','warning');return;}
     if(showcaseVideoError){showToast(showcaseVideoError,'warning');tab='Presentation';return;}
-    await updateCreatorProduct(product.slug,{title,category,summary,description,price,extendedPrice,compatibility,maxVersion,sourceFiles,dependencies,performance,licence,tags:commaList(tagsText),features:lines(featuresText),contents:lines(contentsText),formats:commaList(formatsText),showcaseVideoUrl:showcaseVideo?.canonicalUrl??''});
+    const patch:any={title,summary,description,price,extendedPrice,compatibility,maxVersion,sourceFiles,dependencies,performance,licence,tags:commaList(tagsText),features:lines(featuresText),contents:lines(contentsText),formats:commaList(formatsText),showcaseVideoUrl:showcaseVideo?.canonicalUrl??''};
+    if(category&&category!=='Uncategorised')patch.category=category;
+    await updateCreatorProduct(product.slug,patch);
   }
   async function submitReview(){if(product){await save();await setProductStatus(product.slug,'In review');}}
   async function deleteDraft(){if(!product||!confirm(`Delete the draft “${product.title}”? Uploaded files will also be removed.`))return;await removeCreatorProduct(product.slug);await goto('/creator/products');}

@@ -4,7 +4,7 @@ import { apiError, getSupabaseAdmin, requireRole, writeAudit } from '$lib/server
 import { parseShowcaseVideoUrl } from '$lib/showcase-video';
 
 const schema=z.object({
-  title:z.string().trim().min(5).max(120).optional(),summary:z.string().trim().min(20).max(300).optional(),description:z.string().trim().min(60).max(12000).optional(),
+  title:z.string().trim().min(1).max(120).optional(),summary:z.string().trim().max(300).optional(),description:z.string().trim().max(12000).optional(),
   price:z.number().min(0).max(9999).optional(),extendedPrice:z.number().min(0).max(24999).optional(),version:z.string().min(1).max(40).optional(),
   status:z.enum(['Published','Draft','In review','Changes required','Retired']).optional(),category:z.string().optional(),compatibility:z.string().max(120).optional(),
   maxVersion:z.enum(['2024+','2025+','2026+','Any MAX build']).optional(),sourceFiles:z.boolean().optional(),dependencies:z.string().max(300).optional(),
@@ -40,8 +40,6 @@ export async function PATCH({locals,request,params}:import('./$types').RequestEv
     const effectivePrice=Math.round((body.price??product.price_pence/100)*100);
     const currentExtended=product.extended_price_pence==null?(effectivePrice/100)*2.5:product.extended_price_pence/100;
     const effectiveExtended=Math.round((body.extendedPrice??currentExtended)*100);
-    if(effectivePrice===0&&!settings?.allow_free_assets)return json({message:'Free assets are currently disabled.'},{status:400});
-    if(effectivePrice>0&&effectivePrice<Number(settings?.minimum_price_pence??0))return json({message:`The minimum product price is £${(Number(settings?.minimum_price_pence??0)/100).toFixed(2)}.`},{status:400});
     if(effectiveExtended<effectivePrice)return json({message:'Extended licence price cannot be below the standard price.'},{status:400});
 
     const patch:any={};
@@ -57,6 +55,13 @@ export async function PATCH({locals,request,params}:import('./$types').RequestEv
       if(next==='published'&&product.status!=='published')return json({message:'Only an administrator can publish a product.'},{status:403});
       if(next==='in_review'){
         if(vendor.status!=='approved')return json({message:'Your creator account must be approved before submitting products for review.'},{status:403});
+        if(effectivePrice===0&&!settings?.allow_free_assets)return json({message:'Free assets are currently disabled.'},{status:400});
+        if(effectivePrice>0&&effectivePrice<Number(settings?.minimum_price_pence??0))return json({message:`The minimum product price is £${(Number(settings?.minimum_price_pence??0)/100).toFixed(2)}.`},{status:400});
+        const effectiveTitle=body.title??product.title;
+        const effectiveSummary=body.summary??product.summary;
+        const effectiveDescription=body.description??product.description;
+        const effectiveCategory=body.category??product.category?.name??'';
+        if(effectiveTitle.trim().length<5||effectiveSummary.trim().length<20||effectiveDescription.trim().length<60||!effectiveCategory)return json({message:'Complete the title, category, summary and description before submitting for review.'},{status:409});
         const latest=[...(product.versions??[])].sort((a:any,b:any)=>String(b.created_at).localeCompare(String(a.created_at)))[0];
         if(!latest||!(await objectExists('asset-packages',latest.package_path)))return json({message:'Complete the asset package upload before submitting for review.'},{status:409});
         if(latest.documentation_path&&!(await objectExists('asset-packages',latest.documentation_path)))return json({message:'The documentation upload is incomplete.'},{status:409});

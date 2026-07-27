@@ -1,8 +1,9 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { get } from 'svelte/store';
   import { onMount } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import { loadCreatorData } from '$lib/stores/creator';
+  import { creatorProducts, loadCreatorData } from '$lib/stores/creator';
   import { showToast } from '$lib/stores/marketplace';
   import { platformSettings } from '$lib/stores/admin';
   import { apiRequest } from '$lib/api';
@@ -14,7 +15,7 @@
   let step=1, title='', category='', subcategory='', summary='', description='', dependencies='None', version='1.0.0';
   let price=19.99, extendedPrice=49.99, maxVersion:'2024+'|'2025+'|'2026+'|'Any MAX build'='2026+';
   let performance:'Lightweight'|'Mid-range'|'High detail'='Mid-range';
-  let sourceFiles=true, agreed=false, submitting=false, uploadProgress=0;
+  let sourceFiles=true, agreed=false, draftSaving=false, submitting=false, uploadProgress=0;
   let packageFile:File|null=null, documentationFile:File|null=null, previewFiles:File[]=[];
   let packageInput:HTMLInputElement, docsInput:HTMLInputElement, previewsInput:HTMLInputElement;
   let tags='game-ready, GameGuru MAX', features='', contents='', formats='FBX, PNG', showcaseVideoUrl='';
@@ -54,15 +55,34 @@
 
   onMount(()=>{void loadCategoryOptions();});
 
-  async function save(mode:'draft'|'review'){
+  async function saveDraft(){
+    if($platformSettings.maintenanceMode){showToast('Vendor uploads are paused during maintenance','warning');return;}
+    if(!title.trim()){step=1;showToast('Enter a product title before saving the draft','warning');return;}
+    if(showcaseVideoError){step=3;showToast(showcaseVideoError,'warning');return;}
+    draftSaving=true;
+    try{
+      const response=await apiRequest<{product:{slug:string}}>('/api/vendor/products',{method:'POST',body:JSON.stringify({
+        mode:'draft',title,summary,description,category,subcategory,price,extendedPrice,version,compatibility:'GameGuru MAX',maxVersion,sourceFiles,dependencies,performance,
+        features:list(features),contents:list(contents),tags:list(tags),formats:list(formats),licence:'AssetGuru commercial licence',showcaseVideoUrl:showcaseVideo?.canonicalUrl??''
+      })});
+      await loadCreatorData(true);
+      const confirmed=get(creatorProducts).some((product)=>product.slug===response.product.slug&&product.status==='Draft');
+      if(!confirmed)throw new Error('The draft was created but could not be confirmed in Creator Products.');
+      showToast(`${title.trim()} saved as a private draft`,'success');
+      await goto(`/creator/products/${response.product.slug}`);
+    }catch(error){showToast(error instanceof Error?error.message:'The draft could not be saved','warning');}
+    finally{draftSaving=false;}
+  }
+
+  async function submitReview(){
     if($platformSettings.maintenanceMode){showToast('Vendor uploads are paused during maintenance','warning');return;}
     if(completion<4||!packageFile||!documentationFile||previewFiles.length<3){showToast('Complete the package, presentation and pricing sections first','warning');return;}
-    if(mode==='review'&&!agreed){step=5;showToast('Accept the creator declaration before submission','warning');return;}
+    if(!agreed){step=5;showToast('Accept the creator declaration before submission','warning');return;}
     submitting=true;uploadProgress=0;
     try{
-      const response=await apiRequest<{product:{slug:string};uploads:UploadSpec[];mode:'draft'|'review'}>('/api/vendor/products',{method:'POST',body:JSON.stringify({
+      const response=await apiRequest<{product:{slug:string};uploads:UploadSpec[];mode:'review'}>('/api/vendor/products',{method:'POST',body:JSON.stringify({
         title,summary,description,category,subcategory,price,extendedPrice,version,compatibility:'GameGuru MAX',maxVersion,sourceFiles,dependencies,performance,
-        features:list(features),contents:list(contents),tags:list(tags),formats:list(formats),licence:'AssetGuru commercial licence',showcaseVideoUrl:showcaseVideo?.canonicalUrl??'',mode,
+        features:list(features),contents:list(contents),tags:list(tags),formats:list(formats),licence:'AssetGuru commercial licence',showcaseVideoUrl:showcaseVideo?.canonicalUrl??'',mode:'review',
         files:{package:descriptor(packageFile),documentation:descriptor(documentationFile),previews:previewFiles.map(descriptor)}
       })});
       const supabase=getSupabaseBrowserClient();
@@ -72,11 +92,12 @@
         const {error}=await supabase.storage.from(upload.bucket).uploadToSignedUrl(upload.path,upload.token,file,{contentType:file.type||upload.type});
         if(error)throw error;done++;uploadProgress=Math.round(done/response.uploads.length*100);
       }
-      await apiRequest(`/api/vendor/products/${response.product.slug}/complete`,{method:'POST',body:JSON.stringify({mode})});
+      await apiRequest(`/api/vendor/products/${response.product.slug}/complete`,{method:'POST',body:JSON.stringify({mode:'review'})});
       await loadCreatorData(true);
-      showToast(mode==='review'?`${title} submitted for marketplace review`:`${title} saved as a private draft`,'success');
+      showToast(`${title} submitted for marketplace review`,'success');
       await goto('/creator/products');
-    }catch(error){showToast(error instanceof Error?error.message:'The asset could not be uploaded','warning');submitting=false;}
+    }catch(error){showToast(error instanceof Error?error.message:'The asset could not be uploaded','warning');}
+    finally{submitting=false;}
   }
 </script>
 
@@ -85,7 +106,7 @@
 <input class="sr-only" bind:this={docsInput} type="file" accept=".pdf,.txt,.md,.doc,.docx" onchange={chooseDocs}/>
 <input class="sr-only" bind:this={previewsInput} type="file" accept="image/png,image/jpeg,image/webp" multiple onchange={choosePreviews}/>
 {#if $platformSettings.maintenanceMode}<div class="maintenance-note glass"><Icon name="alert" size={20}/><span><b>Uploads paused for maintenance</b><small>Existing products remain available, but submissions are temporarily disabled.</small></span></div>{/if}
-<header class="upload-head"><a href="/creator/products">← Exit upload</a><div><span class="eyebrow">Guided submission</span><h1>Upload a <span class="gradient-text">new asset.</span></h1><p>Packages upload directly to private storage and remain hidden until administrator approval.</p></div><button class="button button-secondary" type="button" disabled={submitting} onclick={()=>save('draft')}><Icon name="list" size={17}/> Save draft</button></header>
+<header class="upload-head"><a href="/creator/products">← Exit upload</a><div><span class="eyebrow">Guided submission</span><h1>Upload a <span class="gradient-text">new asset.</span></h1><p>Packages upload directly to private storage and remain hidden until administrator approval.</p></div><button class="button button-secondary" type="button" disabled={draftSaving||submitting} onclick={saveDraft}><Icon name="list" size={17}/> {draftSaving?'Saving…':'Save draft'}</button></header>
 <div class="stepper glass">{#each steps as item}<button class:active={step===item.n} class:complete={step>item.n} type="button" onclick={()=>{if(item.n<=step||item.n<=completion+1)step=item.n;}}><i>{step>item.n?'✓':item.n}</i><span><b>{item.label}</b><small>{item.hint}</small></span></button>{/each}<div class="progress"><span style={`width:${((step-1)/4)*100}%`}></span></div></div>
 <div class="upload-grid"><main>
 {#if step===1}
@@ -97,7 +118,7 @@
 {:else if step===4}
 <section class="panel glass"><div class="panel-title"><span>04</span><div><h2>Set clear commercial terms</h2><p>Prices are stored in GBP and the platform commission is recorded per order item.</p></div></div><div class="licence-grid"><div class="licence"><div><Icon name="user" size={20}/><span><b>Standard licence</b><small>Commercial use by one buyer account.</small></span></div><div class="money"><b>£</b><input type="number" min="0" step="0.01" bind:value={price}/></div></div><div class="licence"><div><Icon name="community" size={20}/><span><b>Extended licence</b><small>Broader team or studio usage rights.</small></span></div><div class="money"><b>£</b><input type="number" min={price} step="0.01" bind:value={extendedPrice}/></div></div></div><label class="free-option"><input type="checkbox" checked={price===0} onchange={setFree}/><span><b>Publish as a free asset</b><small>Availability still requires moderation and a valid package.</small></span></label></section>
 {:else}
-<section class="panel glass"><div class="panel-title"><span>05</span><div><h2>Final submission review</h2><p>Nothing is public until an administrator approves the product and version.</p></div></div><div class="review-card"><div><span>PRODUCT SUBMISSION</span><h2>{title||'Untitled asset'}</h2><p>{summary}</p><div><b>{price===0?'Free':`£${price.toFixed(2)}`}</b><small>{category} · v{version}</small></div></div></div><div class="checklist"><div class:done={Boolean(packageFile)}><Icon name={packageFile?'check':'alert'} size={16}/><span>Private asset package selected</span><b>{packageFile?fileSize(packageFile.size):'Missing'}</b></div><div class:done={previewFiles.length>=3}><Icon name={previewFiles.length>=3?'check':'alert'} size={16}/><span>At least three preview images</span><b>{previewFiles.length}/3</b></div><div class:done={Boolean(documentationFile)}><Icon name={documentationFile?'check':'alert'} size={16}/><span>Installation documentation</span><b>{documentationFile?'Ready':'Missing'}</b></div>{#if showcaseVideoUrl.trim()}<div class:done={Boolean(showcaseVideo)}><Icon name={showcaseVideo?'check':'alert'} size={16}/><span>Embedded showcase video</span><b>{showcaseVideo?'Ready':'Invalid URL'}</b></div>{/if}</div><label class="agreement"><input type="checkbox" bind:checked={agreed}/><span>I confirm that I have the rights to distribute every included file and that the listing accurately describes the package.</span></label>{#if submitting}<div class="tip"><Icon name="upload" size={21}/><span><b>Uploading securely · {uploadProgress}%</b><small>Keep this page open until every file is confirmed.</small></span></div>{/if}<div class="review-actions"><button class="button button-secondary" type="button" disabled={submitting} onclick={()=>save('draft')}>Save private draft</button><button class="button button-primary" type="button" disabled={!agreed||submitting} onclick={()=>save('review')}><Icon name="shield" size={17}/> Submit for review</button></div></section>
+<section class="panel glass"><div class="panel-title"><span>05</span><div><h2>Final submission review</h2><p>Nothing is public until an administrator approves the product and version.</p></div></div><div class="review-card"><div><span>PRODUCT SUBMISSION</span><h2>{title||'Untitled asset'}</h2><p>{summary}</p><div><b>{price===0?'Free':`£${price.toFixed(2)}`}</b><small>{category} · v{version}</small></div></div></div><div class="checklist"><div class:done={Boolean(packageFile)}><Icon name={packageFile?'check':'alert'} size={16}/><span>Private asset package selected</span><b>{packageFile?fileSize(packageFile.size):'Missing'}</b></div><div class:done={previewFiles.length>=3}><Icon name={previewFiles.length>=3?'check':'alert'} size={16}/><span>At least three preview images</span><b>{previewFiles.length}/3</b></div><div class:done={Boolean(documentationFile)}><Icon name={documentationFile?'check':'alert'} size={16}/><span>Installation documentation</span><b>{documentationFile?'Ready':'Missing'}</b></div>{#if showcaseVideoUrl.trim()}<div class:done={Boolean(showcaseVideo)}><Icon name={showcaseVideo?'check':'alert'} size={16}/><span>Embedded showcase video</span><b>{showcaseVideo?'Ready':'Invalid URL'}</b></div>{/if}</div><label class="agreement"><input type="checkbox" bind:checked={agreed}/><span>I confirm that I have the rights to distribute every included file and that the listing accurately describes the package.</span></label>{#if submitting}<div class="tip"><Icon name="upload" size={21}/><span><b>Uploading securely · {uploadProgress}%</b><small>Keep this page open until every file is confirmed.</small></span></div>{/if}<div class="review-actions"><button class="button button-secondary" type="button" disabled={draftSaving||submitting} onclick={saveDraft}>Save private draft</button><button class="button button-primary" type="button" disabled={!agreed||submitting||draftSaving} onclick={submitReview}><Icon name="shield" size={17}/> Submit for review</button></div></section>
 {/if}
 <div class="footer-actions"><button class="button button-secondary" type="button" disabled={step===1||submitting} onclick={back}>← Previous</button>{#if step<5}<button class="button button-primary" type="button" disabled={!canContinue||submitting} onclick={next}>Continue →</button>{/if}</div></main><aside><section class="progress-card glass"><span class="eyebrow">Submission health</span><div class="ring"><b>{completion}</b><small>/5 stages</small></div><h3>{completion<3?'Good start':completion<5?'Nearly ready':'Ready to submit'}</h3><p>Files remain private while the product is drafted or under review.</p>{#each steps as item}<button class:done={completion>=item.n} class:active={step===item.n} type="button" onclick={()=>{if(item.n<=completion+1)step=item.n;}}><i>{completion>=item.n?'✓':item.n}</i><span>{item.label}</span></button>{/each}</section><section class="help glass"><Icon name="support" size={24}/><h3>Submission support</h3><p>Questions about packaging, licences or moderation can be opened as a support ticket.</p><a class="button button-secondary" href="/account/support">Open support</a></section></aside></div>
 
