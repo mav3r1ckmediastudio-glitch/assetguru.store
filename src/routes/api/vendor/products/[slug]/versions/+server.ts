@@ -28,7 +28,7 @@ export async function POST({locals,request,params}:import('./$types').RequestEve
     const {data:vendor,error:vendorError}=await admin.from('vendor_profiles').select('*').eq('user_id',user.id).single();
     if(vendorError)throw vendorError;
     if(!vendor)throw Object.assign(new Error('Vendor profile not found.'),{status:404});
-    if(vendor.status!=='approved'||!vendor.stripe_payouts_enabled)return json({message:'Vendor approval and completed Stripe onboarding are required.'},{status:403});
+    if(vendor.status!=='approved')return json({message:'Your creator account must be approved before uploading product versions.'},{status:403});
     const {data:product}=await admin.from('products').select('id,slug,status').eq('vendor_id',vendor.id).eq('slug',params.slug).maybeSingle();
     if(!product)return json({message:'Product not found.'},{status:404});
     if(product.status==='in_review')return json({message:'Wait for the current moderation review before uploading another version.'},{status:409});

@@ -32,7 +32,6 @@ export async function POST({locals,request}:import('./$types').RequestEvent){
       admin.from('marketplace_settings').select('*').eq('id',1).single()
     ]);
     if(!vendor||vendor.status!=='approved')return json({message:'Your creator account must be approved before uploading assets.'},{status:403});
-    if(!vendor.stripe_payouts_enabled)return json({message:'Complete Stripe onboarding before uploading assets.'},{status:403});
     if(settings?.maintenance_mode)return json({message:'Vendor uploads are paused during maintenance.'},{status:503});
 
     const pricePence=Math.round(body.price*100),extendedPence=Math.round(body.extendedPrice*100);

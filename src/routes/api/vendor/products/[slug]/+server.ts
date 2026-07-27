@@ -56,7 +56,7 @@ export async function PATCH({locals,request,params}:import('./$types').RequestEv
       const next=statusMap[body.status];
       if(next==='published'&&product.status!=='published')return json({message:'Only an administrator can publish a product.'},{status:403});
       if(next==='in_review'){
-        if(vendor.status!=='approved'||!vendor.stripe_payouts_enabled)return json({message:'Vendor approval and Stripe onboarding are required.'},{status:403});
+        if(vendor.status!=='approved')return json({message:'Your creator account must be approved before submitting products for review.'},{status:403});
         const latest=[...(product.versions??[])].sort((a:any,b:any)=>String(b.created_at).localeCompare(String(a.created_at)))[0];
         if(!latest||!(await objectExists('asset-packages',latest.package_path)))return json({message:'Complete the asset package upload before submitting for review.'},{status:409});
         if(latest.documentation_path&&!(await objectExists('asset-packages',latest.documentation_path)))return json({message:'The documentation upload is incomplete.'},{status:409});

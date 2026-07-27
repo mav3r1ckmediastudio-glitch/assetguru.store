@@ -22,13 +22,13 @@ export async function POST({ locals, request, params }: import('./$types').Reque
 
     const { data: vendor, error: vendorError } = await admin
       .from('vendor_profiles')
-      .select('id,status,stripe_payouts_enabled')
+      .select('id,status')
       .eq('user_id', user.id)
       .single();
     if (vendorError) throw vendorError;
     if (!vendor) throw Object.assign(new Error('Vendor profile not found.'), { status: 404 });
-    if (body.mode === 'review' && (vendor.status !== 'approved' || !vendor.stripe_payouts_enabled)) {
-      return json({ message: 'Vendor approval and completed Stripe onboarding are required.' }, { status: 403 });
+    if (body.mode === 'review' && vendor.status !== 'approved') {
+      return json({ message: 'Your creator account must be approved before submitting products for review.' }, { status: 403 });
     }
 
     const { data: product, error: productError } = await admin
