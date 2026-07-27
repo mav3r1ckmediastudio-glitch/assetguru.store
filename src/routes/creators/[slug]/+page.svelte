@@ -1,17 +1,18 @@
 <script lang="ts">
-  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import type { PageData } from './$types';
   import AssetCard from '$lib/components/AssetCard.svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import { assets, creators } from '$lib/data/marketplace';
-  import { catalogueCreators } from '$lib/stores/catalogue';
   import { authUser } from '$lib/stores/session';
   import { apiRequest } from '$lib/api';
   import { showToast } from '$lib/stores/marketplace';
 
-  $: creator = $creators.find((item) => item.slug === page.params.slug);
-  $: creatorAssets = creator ? $assets.filter((asset) => asset.creatorSlug === creator.slug) : [];
+  export let data: PageData;
+
+  let creator = data.creator;
+  let creatorAssets = data.creatorAssets ?? [];
+  const slug = data.slug;
   let tab = 'Products';
   let sort = 'Popular';
   let query = '';
@@ -20,7 +21,7 @@
 
   onMount(async () => {
     try {
-      const state=await apiRequest<{following:boolean}>(`/api/creator-follows/${page.params.slug}`);
+      const state=await apiRequest<{following:boolean}>(`/api/creator-follows/${slug}`);
       followed=state.following;
     } catch {
       followed=false;
@@ -28,14 +29,14 @@
   });
 
   async function toggleFollow(){
-    if(!$authUser){await goto(`/login?returnTo=${encodeURIComponent(`/creators/${page.params.slug}`)}`);return;}
+    if(!$authUser){await goto(`/auth/login?returnTo=${encodeURIComponent(`/creators/${slug}`)}`);return;}
     if(!creator||followBusy)return;
     followBusy=true;
     try{
       const next=!followed;
       await apiRequest(`/api/creator-follows/${creator.slug}`,{method:next?'POST':'DELETE'});
       followed=next;
-      catalogueCreators.update(items=>items.map(item=>item.slug===creator?.slug?{...item,followers:Math.max(0,item.followers+(next?1:-1))}:item));
+      creator={...creator,followers:Math.max(0,creator.followers+(next?1:-1))};
       showToast(next?'Creator followed':'Creator unfollowed','success');
     }catch(error){showToast(error instanceof Error?error.message:'Follow preference could not be updated','warning');}
     finally{followBusy=false;}

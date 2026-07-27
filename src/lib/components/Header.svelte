@@ -39,7 +39,7 @@
       <a class="button button-secondary desktop-action admin-entry" class:active={active('/admin') || active('/auth/admin')} href={$currentProfile?.role === 'admin' ? '/admin' : '/auth/admin'} aria-label="Owner administration"><Icon name="shield" size={17}/> Admin</a>
       {#if $authUser}
         {#if $currentProfile?.role === 'vendor'}
-          <a class="button button-secondary sign-in" href="/creator">Creator hub</a>
+          <a class="button button-secondary sign-in" href="/account">Buyer account</a>
         {:else if $currentProfile?.role !== 'admin'}
           <a class="button button-secondary sign-in" href="/account">My account</a>
         {/if}

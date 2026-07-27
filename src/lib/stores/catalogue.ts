@@ -32,7 +32,7 @@ export async function loadCatalogue(force = false) {
   if (loaded && !force) return;
   catalogueLoading.set(true);
   try {
-    const response = await fetch('/api/catalogue');
+    const response = await fetch(`/api/catalogue?refresh=${Date.now()}`, { cache:'no-store' });
     if (!response.ok) throw new Error('Catalogue request failed');
     const data = await response.json();
     catalogueAssets.set(data.assets ?? []);

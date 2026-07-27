@@ -21,7 +21,7 @@ export type StorefrontSettings = {
 };
 
 const defaultCreatorProfile = {
-  name:'Creator',handle:'',avatar:'/favicon.svg',banner:'/images/hero-city.webp',tagline:'',rating:0,reviews:0,followers:0,
+  name:'',handle:'',avatar:'',banner:'',tagline:'',rating:0,reviews:0,followers:0,
   responseTime:'',completion:0,commission:15,payoutSchedule:'',connectedAccount:'Not connected',tier:'NEW',status:'pending',
   hasAvatar:false,hasBanner:false
 };
