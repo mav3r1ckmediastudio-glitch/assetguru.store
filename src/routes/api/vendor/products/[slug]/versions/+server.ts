@@ -30,6 +30,7 @@ const createSchema = z.object({
   documentation: documentationFile.optional()
 });
 const completeSchema = z.object({ versionId: z.string().uuid(), submit: z.boolean().default(false) });
+const deleteSchema = z.object({ versionId: z.string().uuid() });
 const safe = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(-150) || 'file';
 
@@ -260,6 +261,60 @@ export async function PATCH({ locals, request, params }: import('./$types').Requ
             ? 'Invalid version completion request.'
             : e.message
       },
+      { status: error instanceof z.ZodError ? 400 : e.status }
+    );
+  }
+}
+
+export async function DELETE({ locals, request, params }: import('./$types').RequestEvent) {
+  try {
+    const { user } = await requireRole(locals, ['vendor']);
+    const body = deleteSchema.parse(await request.json());
+    const admin = getSupabaseAdmin();
+    const { data: vendor, error: vendorError } = await admin
+      .from('vendor_profiles')
+      .select('id')
+      .eq('user_id', user.id)
+      .single();
+    if (vendorError) throw vendorError;
+    if (!vendor) throw Object.assign(new Error('Vendor profile not found.'), { status: 404 });
+
+    const { data: product } = await admin
+      .from('products')
+      .select('id')
+      .eq('vendor_id', vendor.id)
+      .eq('slug', params.slug)
+      .maybeSingle();
+    if (!product) return json({ message: 'Product not found.' }, { status: 404 });
+
+    const { data: version } = await admin
+      .from('product_versions')
+      .select('id,status,package_path,documentation_path')
+      .eq('id', body.versionId)
+      .eq('product_id', product.id)
+      .maybeSingle();
+    if (!version) return json({ ok: true });
+    if (version.status !== 'pending') {
+      return json({ message: 'Only an incomplete pending upload can be discarded.' }, { status: 409 });
+    }
+
+    const paths = [version.package_path, version.documentation_path].filter(
+      (value): value is string => Boolean(value)
+    );
+    if (paths.length) {
+      try {
+        await deletePackageObjects(admin, paths);
+      } catch {
+        // The browser may have failed before either object existed.
+      }
+    }
+    const { error } = await admin.from('product_versions').delete().eq('id', version.id);
+    if (error) throw error;
+    return json({ ok: true });
+  } catch (error) {
+    const e = apiError(error);
+    return json(
+      { message: error instanceof z.ZodError ? 'Invalid version cleanup request.' : e.message },
       { status: error instanceof z.ZodError ? 400 : e.status }
     );
   }

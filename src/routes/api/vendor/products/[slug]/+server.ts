@@ -22,6 +22,24 @@ async function supabaseObjectExists(bucket:string,path:string){
 }
 
 
+
+export async function GET({locals,params}:import('./$types').RequestEvent){
+  try{
+    const {user}=await requireRole(locals,['vendor']);
+    const admin=getSupabaseAdmin();
+    const {data:vendor,error:vendorError}=await admin.from('vendor_profiles').select('id').eq('user_id',user.id).single();
+    if(vendorError)throw vendorError;
+    if(!vendor)throw Object.assign(new Error('Vendor profile not found.'),{status:404});
+    const {data:product,error}=await admin.from('products').select('id,slug,title,status,updated_at').eq('vendor_id',vendor.id).eq('slug',params.slug).maybeSingle();
+    if(error)throw error;
+    if(!product)return json({message:'Product not found.'},{status:404});
+    return json({product:{id:product.id,slug:product.slug,title:product.title,status:displayStatus(product.status),updatedAt:product.updated_at}});
+  }catch(error){
+    const e=apiError(error);
+    return json({message:e.message},{status:e.status});
+  }
+}
+
 export async function PATCH({locals,request,params}:import('./$types').RequestEvent){
   try{
     const {user}=await requireRole(locals,['vendor']);

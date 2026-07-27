@@ -8,12 +8,10 @@
   import { apiRequest } from '$lib/api';
   import { getSupabaseBrowserClient } from '$lib/supabase/client';
   import { parseShowcaseVideoUrl } from '$lib/showcase-video';
+  import { uploadToR2, verifyR2ForThisBrowser, type R2UploadSpec } from '$lib/r2-upload';
 
   type SupabaseUploadSpec={
-    provider:'supabase';bucket:string;path:string;token:string;role:string;name:string;type:string;size:number
-  };
-  type R2UploadSpec={
-    provider:'r2';url:string;path:string;role:string;name:string;type:string;size:number
+    provider:'supabase';bucket:string;path:string;token:string;role:string;name:string;type:string;size:number;altText?:string;imageType?:'cover'|'gallery';sortOrder?:number
   };
   type UploadSpec=SupabaseUploadSpec|R2UploadSpec;
   type CategoryOption={id:string;name:string;slug:string;subcategories:string[]};
@@ -64,12 +62,6 @@
     if(oversized){showToast(`${oversized.name} exceeds the 15 MB preview-image limit`,'warning');return;}
     previewFiles=selected;
   }
-  function fileForRole(role:string){
-    if(role==='package')return packageFile;
-    if(role==='documentation')return documentationFile;
-    if(role.startsWith('preview-'))return previewFiles[Number(role.split('-')[1])];
-    return null;
-  }
 
   async function loadCategoryOptions(){
     categoriesLoading=true;categoriesError='';
@@ -85,45 +77,46 @@
 
   onMount(()=>{void loadCategoryOptions();});
 
-  function uploadToR2(url:string,file:File,onProgress:(loaded:number)=>void){
-    return new Promise<void>((resolve,reject)=>{
-      const xhr=new XMLHttpRequest();
-      xhr.open('PUT',url);
-      xhr.setRequestHeader('Content-Type',file.type||'application/octet-stream');
-      xhr.upload.onprogress=(event)=>{if(event.lengthComputable)onProgress(event.loaded);};
-      xhr.onerror=()=>reject(new Error('The R2 upload was interrupted. Check your connection and try again.'));
-      xhr.onload=()=>{
-        if(xhr.status>=200&&xhr.status<300){onProgress(file.size);resolve();}
-        else reject(new Error(`Cloudflare R2 rejected the upload (${xhr.status}).`));
-      };
-      xhr.send(file);
-    });
+  async function sendUpload(upload:UploadSpec,file:File,onProgress:(loaded:number)=>void){
+    if(upload.provider==='r2'){
+      await uploadToR2(upload.url,file,file.type||upload.type||'application/octet-stream',onProgress);
+      return;
+    }
+    const client=getSupabaseBrowserClient();
+    const {error}=await client.storage.from(upload.bucket).uploadToSignedUrl(upload.path,upload.token,file,{contentType:file.type||upload.type});
+    if(error)throw error;
+    onProgress(file.size);
   }
 
-  async function uploadFiles(uploads:UploadSpec[]){
-    const client=getSupabaseBrowserClient();
+  async function uploadVersionFiles(uploads:UploadSpec[]){
     const totalBytes=Math.max(1,uploads.reduce((sum,item)=>sum+item.size,0));
     let completedBytes=0;
     for(const upload of uploads){
-      const file=fileForRole(upload.role);
+      const file=upload.role==='package'?packageFile:documentationFile;
       if(!file)throw new Error(`Missing file for ${upload.role}`);
-      if(upload.provider==='r2'){
-        await uploadToR2(upload.url,file,(loaded)=>{
-          uploadProgress=Math.min(99,Math.round((completedBytes+loaded)/totalBytes*100));
-        });
-      }else{
-        const {error}=await client.storage.from(upload.bucket).uploadToSignedUrl(upload.path,upload.token,file,{contentType:file.type||upload.type});
-        if(error)throw error;
-      }
+      await sendUpload(upload,file,(loaded)=>{
+        uploadProgress=Math.min(99,Math.round((completedBytes+loaded)/totalBytes*100));
+      });
       completedBytes+=file.size;
       uploadProgress=Math.round(completedBytes/totalBytes*100);
     }
   }
 
-  function payload(mode:'draft'|'review'){
+  async function uploadPreviewFiles(uploads:SupabaseUploadSpec[]){
+    const client=getSupabaseBrowserClient();
+    for(const [index,upload] of uploads.entries()){
+      const file=previewFiles[index];
+      if(!file)throw new Error('A selected preview image is missing.');
+      const {error}=await client.storage.from(upload.bucket).uploadToSignedUrl(upload.path,upload.token,file,{contentType:file.type||upload.type});
+      if(error)throw error;
+      uploadProgress=Math.min(99,Math.round((index+1)/Math.max(1,uploads.length)*100));
+    }
+  }
+
+  function payload(){
     return {
       title,summary,description,category,subcategory,price,extendedPrice,version,compatibility:'GameGuru MAX',maxVersion,sourceFiles,dependencies,performance,
-      features:list(features),contents:list(contents),tags:list(tags),formats:list(formats),licence:'AssetGuru commercial licence',showcaseVideoUrl:showcaseVideo?.canonicalUrl??'',mode
+      features:list(features),contents:list(contents),tags:list(tags),formats:list(formats),licence:'AssetGuru commercial licence',showcaseVideoUrl:showcaseVideo?.canonicalUrl??'',mode:'draft' as const
     };
   }
 
@@ -135,24 +128,84 @@
       if(completion<4||!packageFile||!documentationFile||previewFiles.length<3){showToast('Complete the package, presentation and pricing sections first','warning');return;}
       if(!agreed){step=5;showToast('Accept the creator declaration before submission','warning');return;}
     }
+
     submitting=true;uploadProgress=0;
-    let createdSlug='';
+    let draftSlug='';
+    let draftConfirmed=false;
+    let pendingVersionId='';
     try{
-      const requestBody=mode==='review'
-        ? {...payload(mode),files:{package:descriptor(packageFile!),documentation:descriptor(documentationFile!),previews:previewFiles.map(descriptor)}}
-        : payload(mode);
-      const response=await apiRequest<{product:{slug:string};uploads:UploadSpec[];mode:'draft'|'review'}>('/api/vendor/products',{method:'POST',body:JSON.stringify(requestBody)});
-      createdSlug=response.product.slug;
-      if(mode==='review'){
-        await uploadFiles(response.uploads);
-        await apiRequest(`/api/vendor/products/${response.product.slug}/complete`,{method:'POST',body:JSON.stringify({mode})});
-      }
+      const draft=await apiRequest<{product:{slug:string};uploads:never[];mode:'draft'}>('/api/vendor/products',{
+        method:'POST',body:JSON.stringify(payload())
+      });
+      draftSlug=draft.product.slug;
+      const confirmation=await apiRequest<{product:{slug:string;status:string}}>(`/api/vendor/products/${draftSlug}`,{cache:'no-store'});
+      if(confirmation.product.slug!==draftSlug||confirmation.product.status!=='Draft')throw new Error('The database did not confirm the private draft.');
+      draftConfirmed=true;
       await loadCreatorData(true);
-      showToast(mode==='review'?`${title} submitted for marketplace review`:`${title} saved as a private draft`,'success');
+
+      if(mode==='draft'){
+        showToast(`${title} saved as a private draft`,'success');
+        await goto(`/creator/products/${draftSlug}`);
+        return;
+      }
+
+      await verifyR2ForThisBrowser();
+
+      const versionResponse=await apiRequest<{versionId:string;uploads:UploadSpec[]}>(`/api/vendor/products/${draftSlug}/versions`,{
+        method:'POST',
+        body:JSON.stringify({
+          version,
+          releaseNotes:'Initial marketplace release',
+          package:descriptor(packageFile!),
+          documentation:descriptor(documentationFile!)
+        })
+      });
+      pendingVersionId=versionResponse.versionId;
+      await uploadVersionFiles(versionResponse.uploads);
+      await apiRequest(`/api/vendor/products/${draftSlug}/versions`,{
+        method:'PATCH',body:JSON.stringify({versionId:pendingVersionId,submit:false})
+      });
+      pendingVersionId='';
+
+      const imageResponse=await apiRequest<{uploads:SupabaseUploadSpec[]}>(`/api/vendor/products/${draftSlug}/images`,{
+        method:'POST',body:JSON.stringify({files:previewFiles.map(descriptor)})
+      });
+      await uploadPreviewFiles(imageResponse.uploads);
+      await apiRequest(`/api/vendor/products/${draftSlug}/images`,{
+        method:'PATCH',
+        body:JSON.stringify({items:imageResponse.uploads.map((upload,index)=>({
+          path:upload.path,
+          altText:`${title} preview ${index+1}`,
+          imageType:upload.imageType??(index===0?'cover':'gallery'),
+          sortOrder:upload.sortOrder??index
+        }))})
+      });
+
+      await apiRequest(`/api/vendor/products/${draftSlug}`,{
+        method:'PATCH',body:JSON.stringify({status:'In review'})
+      });
+      await loadCreatorData(true);
+      uploadProgress=100;
+      showToast(`${title} submitted for marketplace review`,'success');
       await goto('/creator/products');
     }catch(error){
       const base=error instanceof Error?error.message:'The product could not be saved';
-      showToast(createdSlug?`${base} A private draft was created; reopen it from Creator Hub → Products.`:base,'warning');
+      if(pendingVersionId&&draftSlug){
+        try{
+          await apiRequest(`/api/vendor/products/${draftSlug}/versions`,{
+            method:'DELETE',body:JSON.stringify({versionId:pendingVersionId})
+          });
+        }catch{
+          // The confirmed product draft remains available even if cleanup is incomplete.
+        }
+      }
+      if(draftConfirmed&&draftSlug){
+        await loadCreatorData(true).catch(()=>undefined);
+        showToast(`${base} Your private draft was confirmed and has been opened so nothing needs to be re-entered.`,'warning');
+        await goto(`/creator/products/${draftSlug}?upload=failed`);
+        return;
+      }
+      showToast(base,'warning');
       submitting=false;
     }
   }

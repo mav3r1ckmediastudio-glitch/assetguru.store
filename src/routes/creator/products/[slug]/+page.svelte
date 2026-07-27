@@ -10,9 +10,9 @@
   import { getSupabaseBrowserClient } from '$lib/supabase/client';
   import { parseShowcaseVideoUrl } from '$lib/showcase-video';
   import { taxonomyCategory } from '$lib/data/category-taxonomy';
+  import { uploadToR2, verifyR2ForThisBrowser, type R2UploadSpec } from '$lib/r2-upload';
 
   type SupabaseUploadSpec={provider:'supabase';bucket:string;path:string;token:string;role:string;name:string;type:string;size:number;altText?:string;imageType?:'cover'|'gallery';sortOrder?:number};
-  type R2UploadSpec={provider:'r2';url:string;path:string;role:string;name:string;type:string;size:number};
   type UploadSpec=SupabaseUploadSpec|R2UploadSpec;
 
   let tab='Overview';
@@ -43,24 +43,9 @@
   const selectedFile=(event:Event)=>(event.currentTarget as HTMLInputElement).files?.[0];
   const selectedFiles=(event:Event)=>[...((event.currentTarget as HTMLInputElement).files??[])];
 
-  function uploadToR2(url:string,file:File,onProgress:(loaded:number)=>void){
-    return new Promise<void>((resolve,reject)=>{
-      const xhr=new XMLHttpRequest();
-      xhr.open('PUT',url);
-      xhr.setRequestHeader('Content-Type',file.type||'application/octet-stream');
-      xhr.upload.onprogress=(event)=>{if(event.lengthComputable)onProgress(event.loaded);};
-      xhr.onerror=()=>reject(new Error('The R2 upload was interrupted. Check your connection and try again.'));
-      xhr.onload=()=>{
-        if(xhr.status>=200&&xhr.status<300){onProgress(file.size);resolve();}
-        else reject(new Error(`Cloudflare R2 rejected the upload (${xhr.status}).`));
-      };
-      xhr.send(file);
-    });
-  }
-
   async function sendUpload(upload:UploadSpec,file:File,onProgress:(loaded:number)=>void){
     if(upload.provider==='r2'){
-      await uploadToR2(upload.url,file,onProgress);
+      await uploadToR2(upload.url,file,file.type||upload.type||'application/octet-stream',onProgress);
       return;
     }
     const client=getSupabaseBrowserClient();
@@ -81,8 +66,11 @@
     if(!product||!packageFile||!versionNumber.trim()||releaseNotes.trim().length<10){showToast('Choose a package and enter a version number with release notes','warning');return;}
     if(!product.versions.length&&!documentationFile){showToast('Attach installation documentation for the first product version','warning');return;}
     versionBusy=true;versionProgress=0;
+    let pendingVersionId='';
     try{
+      await verifyR2ForThisBrowser();
       const response=await apiRequest<{versionId:string;uploads:UploadSpec[]}>(`/api/vendor/products/${product.slug}/versions`,{method:'POST',body:JSON.stringify({version:versionNumber,releaseNotes,package:{name:packageFile.name,size:packageFile.size,type:packageFile.type||'application/octet-stream'},documentation:documentationFile?{name:documentationFile.name,size:documentationFile.size,type:documentationFile.type||'application/octet-stream'}:undefined})});
+      pendingVersionId=response.versionId;
       const total=Math.max(1,response.uploads.reduce((sum,item)=>sum+item.size,0));let complete=0;
       for(const upload of response.uploads){
         const file=upload.role==='package'?packageFile:documentationFile;
@@ -91,8 +79,15 @@
         complete+=file.size;versionProgress=Math.round(complete/total*100);
       }
       await apiRequest(`/api/vendor/products/${product.slug}/versions`,{method:'PATCH',body:JSON.stringify({versionId:response.versionId,submit:false})});
+      pendingVersionId='';
       await loadCreatorData(true);versionNumber='';releaseNotes='';packageFile=undefined;documentationFile=undefined;showToast('Version uploaded. Submit the product for review when the listing is ready.','success');
-    }catch(error){showToast(error instanceof Error?error.message:'Version upload failed','warning');}
+    }catch(error){
+      if(pendingVersionId){
+        try{await apiRequest(`/api/vendor/products/${product.slug}/versions`,{method:'DELETE',body:JSON.stringify({versionId:pendingVersionId})});}catch{}
+      }
+      await loadCreatorData(true).catch(()=>undefined);
+      showToast(error instanceof Error?error.message:'Version upload failed','warning');
+    }
     finally{versionBusy=false;}
   }
 
@@ -120,6 +115,7 @@
 {#if product}
 <header class="product-head"><a href="/creator/products">← All products</a><div class="head-main"><img src={product.image} alt=""/><div><div class="head-status"><StatusPill status={product.status}/><span>{product.category}</span><span>v{product.version}</span></div><h1>{product.title}</h1><p>Last updated {product.updated} · {product.views.toLocaleString('en-GB')} listing views</p></div><div class="actions">{#if product.status==='Published'}<a class="button button-secondary" href={`/marketplace/${product.slug}`}><Icon name="eye" size={17}/> View listing</a>{/if}<button class="button button-primary" type="button" onclick={save}><Icon name="check" size={17}/> Save changes</button></div></div></header>
 
+{#if page.url.searchParams.get('upload')==='failed'}<div class="notice warning"><Icon name="alert" size={20}/><div><b>Your private draft is safely stored</b><p>The package upload did not complete. Nothing in this listing needs to be re-entered; open Versions to retry after the R2 connection issue is corrected.</p></div><button type="button" onclick={()=>tab='Versions'}>Open Versions</button></div>{/if}
 {#if product.status==='Changes required'}<div class="notice warning"><Icon name="alert" size={20}/><div><b>Marketplace review requested changes</b><p>{product.moderationNote||'Review the listing and package, then resubmit when the requested changes are complete.'}</p></div><button type="button" onclick={submitReview}>Resubmit for review</button></div>{/if}
 {#if product.status==='In review'}<div class="notice review"><Icon name="clock" size={20}/><div><b>This release is being reviewed</b><p>This listing is temporarily unavailable in the marketplace until an administrator approves the release.</p></div><span>Moderation pending</span></div>{/if}
 

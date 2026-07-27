@@ -39,6 +39,33 @@ function getClient() {
   return { client, bucket: current.bucket };
 }
 
+export function r2EndpointDetails() {
+  const current = config();
+  return { endpointHost: new URL(current.endpoint).host, bucket: current.bucket };
+}
+
+export async function testR2ServerConnection(userId: string) {
+  const { client: s3, bucket } = getClient();
+  const key = `__assetguru-health/server/${userId}/${crypto.randomUUID()}.txt`;
+  try {
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: new TextEncoder().encode('AssetGuru server R2 check'),
+        ContentType: 'text/plain'
+      })
+    );
+    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+  } finally {
+    try {
+      await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    } catch {
+      // A failed health check may not have created an object.
+    }
+  }
+}
+
 export function r2StoredPath(key: string) {
   return `${R2_PREFIX}${key}`;
 }
