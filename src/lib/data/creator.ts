@@ -7,7 +7,6 @@ export type CreatorProduct = {
   title: string;
   image: string;
   category: string;
-  subcategory?: string;
   status: ProductStatus;
   price: number;
   sales: number;

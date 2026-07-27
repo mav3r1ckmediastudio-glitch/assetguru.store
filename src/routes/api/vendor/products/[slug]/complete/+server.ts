@@ -1,11 +1,10 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { apiError, getSupabaseAdmin, requireRole, writeAudit } from '$lib/server/supabase';
-import { packageObjectExists } from '$lib/server/r2';
 
 const schema = z.object({ mode: z.enum(['draft', 'review']) });
 
-async function supabaseObjectExists(bucket: string, path: string) {
+async function exists(bucket: string, path: string) {
   const admin = getSupabaseAdmin();
   const parts = path.split('/');
   const name = parts.pop()!;
@@ -41,25 +40,17 @@ export async function POST({ locals, request, params }: import('./$types').Reque
     if (productError) throw productError;
     if (!product) return json({ message: 'Product draft not found.' }, { status: 404 });
 
-    if (body.mode === 'review') {
-      const version = [...((product.versions as any[]) ?? [])]
-        .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
-      if (!version || !(await packageObjectExists(admin, version.package_path))) {
-        return json({ message: 'The asset package upload did not complete.' }, { status: 409 });
-      }
-      if (!version.documentation_path) {
-        return json({ message: 'Attach installation documentation before submitting for review.' }, { status: 409 });
-      }
-      if (!(await packageObjectExists(admin, version.documentation_path))) {
-        return json({ message: 'The documentation upload did not complete.' }, { status: 409 });
-      }
-      if (((product.images as any[]) ?? []).length < 3) {
-        return json({ message: 'Add at least three preview images before submitting for review.' }, { status: 409 });
-      }
-      for (const image of (product.images as any[]) ?? []) {
-        if (!(await supabaseObjectExists('product-images', image.storage_path))) {
-          return json({ message: 'One or more preview uploads did not complete.' }, { status: 409 });
-        }
+    const version = [...((product.versions as any[]) ?? [])]
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+    if (!version || !(await exists('asset-packages', version.package_path))) {
+      return json({ message: 'The asset package upload did not complete.' }, { status: 409 });
+    }
+    if (version.documentation_path && !(await exists('asset-packages', version.documentation_path))) {
+      return json({ message: 'The documentation upload did not complete.' }, { status: 409 });
+    }
+    for (const image of (product.images as any[]) ?? []) {
+      if (!(await exists('product-images', image.storage_path))) {
+        return json({ message: 'One or more preview uploads did not complete.' }, { status: 409 });
       }
     }
 
