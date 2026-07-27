@@ -11,6 +11,7 @@
   export let data: PageData;
 
   let creator = data.creator;
+  const loadError = data.loadError ?? false;
   let creatorAssets = data.creatorAssets ?? [];
   const slug = data.slug;
   let tab = 'Products';
@@ -84,7 +85,7 @@
 </section>
 
 {:else}
-<section class="section"><div class="content-wrap"><div class="empty-state glass"><span class="eyebrow">Creators</span><h1>Creator unavailable.</h1><p>This storefront does not exist or has not been approved.</p><a class="button button-primary" href="/creators">Browse creators</a></div></div></section>
+<section class="section"><div class="content-wrap"><div class="empty-state glass"><span class="eyebrow">Creators</span><h1>{loadError ? 'Storefront temporarily unavailable.' : 'Creator unavailable.'}</h1><p>{loadError ? 'The storefront could not be loaded. Refresh the page to try again.' : 'This storefront does not exist or has not been approved.'}</p><a class="button button-primary" href="/creators">Browse creators</a></div></div></section>
 {/if}
 
 <style>
