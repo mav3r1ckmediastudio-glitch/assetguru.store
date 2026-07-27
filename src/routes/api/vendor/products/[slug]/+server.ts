@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { apiError, getSupabaseAdmin, requireRole, writeAudit } from '$lib/server/supabase';
+import { parseShowcaseVideoUrl } from '$lib/showcase-video';
 
 const schema=z.object({
   title:z.string().trim().min(5).max(120).optional(),summary:z.string().trim().min(20).max(300).optional(),description:z.string().trim().min(60).max(12000).optional(),
@@ -8,7 +9,7 @@ const schema=z.object({
   status:z.enum(['Published','Draft','In review','Changes required','Retired']).optional(),category:z.string().optional(),compatibility:z.string().max(120).optional(),
   maxVersion:z.enum(['2024+','2025+','2026+','Any MAX build']).optional(),sourceFiles:z.boolean().optional(),dependencies:z.string().max(300).optional(),
   performance:z.enum(['Lightweight','Mid-range','High detail']).optional(),features:z.array(z.string().max(180)).max(50).optional(),contents:z.array(z.string().max(180)).max(100).optional(),
-  tags:z.array(z.string().max(50)).max(30).optional(),formats:z.array(z.string().max(30)).max(30).optional(),licence:z.string().max(200).optional()
+  tags:z.array(z.string().max(50)).max(30).optional(),formats:z.array(z.string().max(30)).max(30).optional(),licence:z.string().max(200).optional(),showcaseVideoUrl:z.string().trim().max(500).optional()
 });
 const statusMap={Published:'published',Draft:'draft','In review':'in_review','Changes required':'changes_requested',Retired:'retired'} as const;
 const displayStatus=(status:string)=>({published:'Published',draft:'Draft',in_review:'In review',changes_requested:'Changes required',retired:'Retired',rejected:'Changes required'} as any)[status]??'Draft';
@@ -23,6 +24,8 @@ export async function PATCH({locals,request,params}:import('./$types').RequestEv
   try{
     const {user}=await requireRole(locals,['vendor']);
     const body=schema.parse(await request.json());
+    const showcaseVideo=body.showcaseVideoUrl===undefined?undefined:(body.showcaseVideoUrl?parseShowcaseVideoUrl(body.showcaseVideoUrl):null);
+    if(body.showcaseVideoUrl&& !showcaseVideo)return json({message:'Use a valid YouTube or Vimeo video URL.'},{status:400});
     const admin=getSupabaseAdmin();
     const [{data:vendor,error:vendorError},{data:settings,error:settingsError}]=await Promise.all([
       admin.from('vendor_profiles').select('*').eq('user_id',user.id).single(),
@@ -46,7 +49,7 @@ export async function PATCH({locals,request,params}:import('./$types').RequestEv
     if(body.price!==undefined)patch.price_pence=effectivePrice;if(body.extendedPrice!==undefined)patch.extended_price_pence=effectiveExtended;
     if(body.compatibility!==undefined)patch.compatibility=body.compatibility;if(body.maxVersion!==undefined)patch.max_version=body.maxVersion;if(body.sourceFiles!==undefined)patch.source_files=body.sourceFiles;
     if(body.dependencies!==undefined)patch.dependencies=body.dependencies;if(body.performance!==undefined)patch.performance=body.performance;if(body.features!==undefined)patch.features=body.features;
-    if(body.contents!==undefined)patch.contents=body.contents;if(body.tags!==undefined)patch.tags=body.tags;if(body.formats!==undefined)patch.formats=body.formats;if(body.licence!==undefined)patch.licence=body.licence;
+    if(body.contents!==undefined)patch.contents=body.contents;if(body.tags!==undefined)patch.tags=body.tags;if(body.formats!==undefined)patch.formats=body.formats;if(body.licence!==undefined)patch.licence=body.licence;if(body.showcaseVideoUrl!==undefined)patch.showcase_video_url=showcaseVideo?.canonicalUrl??null;
     if(body.category){const {data:category}=await admin.from('categories').select('id').eq('name',body.category).maybeSingle();if(!category)return json({message:'Choose a valid category.'},{status:400});patch.category_id=category.id;}
 
     if(body.status){
@@ -70,7 +73,7 @@ export async function PATCH({locals,request,params}:import('./$types').RequestEv
     const latest=sortedVersions.find((entry:any)=>entry.is_current)??sortedVersions[0];
     const imageUrl=sortedImages[0]?admin.storage.from('product-images').getPublicUrl(sortedImages[0].storage_path).data.publicUrl:'/images/marketplace-grid.webp';
     await writeAudit({actorId:user.id,actorRole:'vendor',action:'product.updated',entityType:'product',entityId:product.id,metadata:body,request});
-    return json({product:{id:updated.id,currentVersionId:latest?.id,slug:updated.slug,title:updated.title,image:imageUrl,images:sortedImages.map((entry:any)=>admin.storage.from('product-images').getPublicUrl(entry.storage_path).data.publicUrl),category:updated.category?.name??'Uncategorised',status:displayStatus(updated.status),price:updated.price_pence/100,extendedPrice:updated.extended_price_pence==null?undefined:updated.extended_price_pence/100,summary:updated.summary,description:updated.description,compatibility:updated.compatibility,maxVersion:updated.max_version,sourceFiles:updated.source_files,dependencies:updated.dependencies,performance:updated.performance,features:updated.features,contents:updated.contents,tags:updated.tags,formats:updated.formats,licence:updated.licence,sales:updated.sales_count,revenue:0,views:updated.view_count,conversion:0,rating:Number(updated.rating_average),reviews:updated.review_count,version:body.version??latest?.version??'1.0.0',versions:sortedVersions.map((entry:any)=>({id:entry.id,version:entry.version,status:entry.status,isCurrent:Boolean(entry.is_current),size:entry.file_size_bytes?`${Math.round(entry.file_size_bytes/1024/1024)} MB`:'0 MB',created:new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric'}).format(new Date(entry.created_at)),releaseNotes:entry.release_notes??''})),updated:'Just now',moderationNote:updated.moderation_notes||undefined}});
+    return json({product:{id:updated.id,currentVersionId:latest?.id,slug:updated.slug,title:updated.title,image:imageUrl,images:sortedImages.map((entry:any)=>admin.storage.from('product-images').getPublicUrl(entry.storage_path).data.publicUrl),category:updated.category?.name??'Uncategorised',status:displayStatus(updated.status),price:updated.price_pence/100,extendedPrice:updated.extended_price_pence==null?undefined:updated.extended_price_pence/100,summary:updated.summary,description:updated.description,compatibility:updated.compatibility,maxVersion:updated.max_version,sourceFiles:updated.source_files,dependencies:updated.dependencies,performance:updated.performance,features:updated.features,contents:updated.contents,tags:updated.tags,formats:updated.formats,licence:updated.licence,showcaseVideoUrl:updated.showcase_video_url||undefined,sales:updated.sales_count,revenue:0,views:updated.view_count,conversion:0,rating:Number(updated.rating_average),reviews:updated.review_count,version:body.version??latest?.version??'1.0.0',versions:sortedVersions.map((entry:any)=>({id:entry.id,version:entry.version,status:entry.status,isCurrent:Boolean(entry.is_current),size:entry.file_size_bytes?`${Math.round(entry.file_size_bytes/1024/1024)} MB`:'0 MB',created:new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric'}).format(new Date(entry.created_at)),releaseNotes:entry.release_notes??''})),updated:'Just now',moderationNote:updated.moderation_notes||undefined}});
   }catch(error){const e=apiError(error);return json({message:error instanceof z.ZodError?'Invalid product update.':e.message},{status:error instanceof z.ZodError?400:e.status});}
 }
 

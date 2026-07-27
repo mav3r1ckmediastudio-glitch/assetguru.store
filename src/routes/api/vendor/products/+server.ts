@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { apiError, getSupabaseAdmin, requireRole, writeAudit } from '$lib/server/supabase';
 import { taxonomyCategory } from '$lib/data/category-taxonomy';
+import { parseShowcaseVideoUrl } from '$lib/showcase-video';
 
 const baseFile=z.object({name:z.string().min(1).max(255),size:z.number().int().min(1),type:z.string().max(120).default('application/octet-stream')});
 const packageFile=baseFile.refine(file=>file.size<=5*1024**3,'Asset packages cannot exceed 5 GB.');
@@ -12,7 +13,7 @@ const schema=z.object({
   category:z.string().min(1),subcategory:z.string().trim().min(1,'Choose a subcategory.').max(100),price:z.number().min(0).max(9999),extendedPrice:z.number().min(0).max(24999),
   version:z.string().trim().min(1).max(40),compatibility:z.string().max(120).default('GameGuru MAX'),maxVersion:z.enum(['2024+','2025+','2026+','Any MAX build']).default('Any MAX build'),
   sourceFiles:z.boolean().default(false),dependencies:z.string().max(300).default('None'),performance:z.enum(['Lightweight','Mid-range','High detail']).default('Mid-range'),
-  features:z.array(z.string().max(180)).max(50).default([]),contents:z.array(z.string().max(180)).max(100).default([]),tags:z.array(z.string().max(50)).max(30).default([]),formats:z.array(z.string().max(30)).max(30).default([]),licence:z.string().max(200).default('Standard commercial licence'),
+  features:z.array(z.string().max(180)).max(50).default([]),contents:z.array(z.string().max(180)).max(100).default([]),tags:z.array(z.string().max(50)).max(30).default([]),formats:z.array(z.string().max(30)).max(30).default([]),licence:z.string().max(200).default('Standard commercial licence'),showcaseVideoUrl:z.string().trim().max(500).default(''),
   mode:z.enum(['draft','review']),files:z.object({package:packageFile,documentation:documentationFile.optional(),previews:z.array(previewFile).min(1).max(12)})
 });
 const safe=(value:string)=>value.toLowerCase().replace(/[^a-z0-9._-]+/g,'-').replace(/^-+|-+$/g,'').slice(-150)||'file';
@@ -23,6 +24,8 @@ export async function POST({locals,request}:import('./$types').RequestEvent){
   try{
     const {user}=await requireRole(locals,['vendor']);
     const body=schema.parse(await request.json());
+    const showcaseVideo=body.showcaseVideoUrl?parseShowcaseVideoUrl(body.showcaseVideoUrl):null;
+    if(body.showcaseVideoUrl&&!showcaseVideo)return json({message:'Use a valid YouTube or Vimeo video URL.'},{status:400});
     const admin=getSupabaseAdmin();
     const [{data:vendor},{data:settings}]=await Promise.all([
       admin.from('vendor_profiles').select('*').eq('user_id',user.id).single(),
@@ -46,7 +49,7 @@ export async function POST({locals,request}:import('./$types').RequestEvent){
     let slug=slugify(body.title);
     const {data:existing}=await admin.from('products').select('id').eq('slug',slug).maybeSingle();
     if(existing)slug=`${slug}-${crypto.randomUUID().slice(0,6)}`;
-    const {data:product,error:productError}=await admin.from('products').insert({vendor_id:vendor.id,category_id:category.id,slug,title:body.title,subcategory:body.subcategory,summary:body.summary,description:body.description,price_pence:pricePence,extended_price_pence:extendedPence,status:'draft',compatibility:body.compatibility,max_version:body.maxVersion,source_files:body.sourceFiles,dependencies:body.dependencies,performance:body.performance,features:body.features,contents:body.contents,tags:body.tags,formats:body.formats,licence:body.licence}).select('*').single();
+    const {data:product,error:productError}=await admin.from('products').insert({vendor_id:vendor.id,category_id:category.id,slug,title:body.title,subcategory:body.subcategory,summary:body.summary,description:body.description,price_pence:pricePence,extended_price_pence:extendedPence,status:'draft',compatibility:body.compatibility,max_version:body.maxVersion,source_files:body.sourceFiles,dependencies:body.dependencies,performance:body.performance,features:body.features,contents:body.contents,tags:body.tags,formats:body.formats,licence:body.licence,...(showcaseVideo?{showcase_video_url:showcaseVideo.canonicalUrl}:{})}).select('*').single();
     if(productError)throw productError;
     createdProductId=product.id;
 
@@ -74,7 +77,7 @@ export async function POST({locals,request}:import('./$types').RequestEvent){
 
     await writeAudit({actorId:user.id,actorRole:'vendor',action:'product.draft_created',entityType:'product',entityId:product.id,metadata:{slug,version:body.version,mode:body.mode},request});
     createdProductId=undefined;
-    return json({product:{id:product.id,currentVersionId:version.id,slug,title:product.title,image:'/images/marketplace-grid.webp',category:category.name,status:'Draft',price:body.price,extendedPrice:body.extendedPrice,sales:0,revenue:0,views:0,conversion:0,rating:0,reviews:0,version:body.version,updated:'Just now',summary:body.summary,description:body.description,compatibility:body.compatibility,maxVersion:body.maxVersion,sourceFiles:body.sourceFiles,dependencies:body.dependencies,performance:body.performance,features:body.features,contents:body.contents,tags:body.tags,formats:body.formats,licence:body.licence,images:[],versions:[{id:version.id,version:body.version,status:'pending',isCurrent:false,size:`${Math.round(body.files.package.size/1024/1024)} MB`,created:'Just now',releaseNotes:'Initial release'}]},uploads,mode:body.mode});
+    return json({product:{id:product.id,currentVersionId:version.id,slug,title:product.title,image:'/images/marketplace-grid.webp',category:category.name,status:'Draft',price:body.price,extendedPrice:body.extendedPrice,sales:0,revenue:0,views:0,conversion:0,rating:0,reviews:0,version:body.version,updated:'Just now',summary:body.summary,description:body.description,compatibility:body.compatibility,maxVersion:body.maxVersion,sourceFiles:body.sourceFiles,dependencies:body.dependencies,performance:body.performance,features:body.features,contents:body.contents,tags:body.tags,formats:body.formats,licence:body.licence,showcaseVideoUrl:showcaseVideo?.canonicalUrl,images:[],versions:[{id:version.id,version:body.version,status:'pending',isCurrent:false,size:`${Math.round(body.files.package.size/1024/1024)} MB`,created:'Just now',releaseNotes:'Initial release'}]},uploads,mode:body.mode});
   }catch(error){
     console.error(error);
     if(createdProductId)await getSupabaseAdmin().from('products').delete().eq('id',createdProductId);

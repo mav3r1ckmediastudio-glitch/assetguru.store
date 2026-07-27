@@ -32,6 +32,7 @@ export type CreatorProduct = {
   formats: string[];
   licence: string;
   images: string[];
+  showcaseVideoUrl?: string;
   versions: { id:string; version:string; status:string; isCurrent:boolean; size:string; created:string; releaseNotes:string }[];
 };
 export type CreatorOrder = {

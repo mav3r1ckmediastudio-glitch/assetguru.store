@@ -22,6 +22,7 @@ export type Asset = {
   creatorAvatar: string;
   image: string;
   gallery: string[];
+  showcaseVideoUrl?: string;
   price: number;
   oldPrice?: number;
   extendedPrice?: number;
