@@ -1,4 +1,4 @@
-import { derived, writable } from 'svelte/store';
+import { derived, get, writable } from 'svelte/store';
 import { apiRequest } from '$lib/api';
 import { getAsset, type Asset } from '$lib/data/marketplace';
 import { defaultBuyerProfile, type BuyerProfile, type BuyerOrder, type BuyerReview, type DownloadEvent, type SupportTicket } from '$lib/data/buyer';
@@ -12,6 +12,10 @@ export const downloadHistory = writable<DownloadEvent[]>([]);
 export const dismissedUpdates = writable<string[]>([]);
 export const buyerNotifications = writable<any[]>([]);
 export const buyerLoaded = writable(false);
+export const buyerLoading = writable(false);
+export const buyerLoadError = writable<string | null>(null);
+
+let buyerLoadGeneration = 0;
 
 export type BuyerEntitlement = {
   slug: string;
@@ -73,17 +77,46 @@ export const pendingReviewAssets = derived(
   }
 );
 
+export function resetBuyerData() {
+  buyerLoadGeneration += 1;
+  buyerProfile.set(defaultBuyerProfile);
+  buyerOrders.set([]);
+  buyerReviews.set([]);
+  supportTickets.set([]);
+  downloadHistory.set([]);
+  dismissedUpdates.set([]);
+  buyerNotifications.set([]);
+  hydrateFavourites([]);
+  buyerLoaded.set(false);
+  buyerLoading.set(false);
+  buyerLoadError.set(null);
+}
+
 export async function loadBuyerData(force=false) {
-  let loaded=false; buyerLoaded.subscribe(v=>loaded=v)(); if(loaded&&!force)return;
-  const data=await apiRequest<any>('/api/buyer');
-  buyerProfile.set(data.profile ?? defaultBuyerProfile);
-  buyerOrders.set(data.orders ?? []);
-  buyerReviews.set(data.reviews ?? []);
-  supportTickets.set(data.tickets ?? []);
-  downloadHistory.set(data.downloads ?? []);
-  buyerNotifications.set(data.notifications ?? []);
-  hydrateFavourites(data.favourites ?? []);
-  buyerLoaded.set(true);
+  if (get(buyerLoaded) && !force) return;
+  const generation = ++buyerLoadGeneration;
+  buyerLoading.set(true);
+  buyerLoadError.set(null);
+  try {
+    const data=await apiRequest<any>('/api/buyer');
+    if (generation !== buyerLoadGeneration) return;
+    buyerProfile.set(data.profile ?? defaultBuyerProfile);
+    buyerOrders.set(data.orders ?? []);
+    buyerReviews.set(data.reviews ?? []);
+    supportTickets.set(data.tickets ?? []);
+    downloadHistory.set(data.downloads ?? []);
+    buyerNotifications.set(data.notifications ?? []);
+    hydrateFavourites(data.favourites ?? []);
+    buyerLoaded.set(true);
+  } catch (error) {
+    if (generation === buyerLoadGeneration) {
+      buyerLoaded.set(false);
+      buyerLoadError.set(error instanceof Error ? error.message : 'Buyer data could not be loaded');
+    }
+    throw error;
+  } finally {
+    if (generation === buyerLoadGeneration) buyerLoading.set(false);
+  }
 }
 
 export async function recordDownload(slug:string, version:string) {

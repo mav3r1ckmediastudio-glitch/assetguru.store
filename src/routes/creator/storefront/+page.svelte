@@ -1,15 +1,17 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import Icon from '$lib/components/Icon.svelte';
-  import { creatorProfile, creatorProducts, storefront, updateStorefront, loadCreatorData, type StorefrontSettings } from '$lib/stores/creator';
+  import { calculateStorefrontCompletion, creatorLoadError, creatorLoaded, creatorLoading, creatorProfile, creatorProducts, storefront, updateStorefront, loadCreatorData, type StorefrontSettings } from '$lib/stores/creator';
   import { apiRequest } from '$lib/api';
   import { getSupabaseBrowserClient } from '$lib/supabase/client';
   import { showToast } from '$lib/stores/marketplace';
 
   let form: StorefrontSettings = { ...get(storefront), sections: { ...get(storefront).sections } };
-  let formHydrated = false;
+  let loadedSnapshot = '';
   let previewMode: 'desktop'|'mobile' = 'desktop';
   let section = 'Brand & profile';
+  let saving = false;
   const sectionLinks: { label:string; icon:'user'|'grid'|'star'|'shield'|'eye' }[] = [
     {label:'Brand & profile',icon:'user'}, {label:'Homepage layout',icon:'grid'}, {label:'Featured products',icon:'star'}, {label:'Store policies',icon:'shield'}, {label:'Visibility',icon:'eye'}
   ];
@@ -21,37 +23,84 @@
     {key:'about',title:'About the studio',hint:'Your longer brand story',icon:'user'}
   ];
   const accents: StorefrontSettings['accent'][] = ['cyan','violet','magenta'];
-  $: if (!formHydrated && $storefront.displayName) {
+
+  $: storefrontSnapshot = JSON.stringify($storefront);
+  $: if (storefrontSnapshot !== loadedSnapshot) {
     form = { ...$storefront, sections: { ...$storefront.sections } };
-    formHydrated = true;
+    loadedSnapshot = storefrontSnapshot;
   }
   $: featured = $creatorProducts.find((item)=>item.slug===form.featuredSlug) ?? $creatorProducts[0];
+  $: missingItems = [
+    !form.tagline && 'store tagline',
+    !form.bio && 'about your studio',
+    !form.supportEmail && 'support email',
+    !form.responseTime && 'response time',
+    !$creatorProfile.hasAvatar && 'store logo',
+    !$creatorProfile.hasBanner && 'store banner'
+  ].filter(Boolean) as string[];
+
   let avatarInput:HTMLInputElement | undefined;
   let bannerInput:HTMLInputElement | undefined;
   const selectedFile=(event:Event)=>(event.currentTarget as HTMLInputElement).files?.[0];
   let mediaUploading:''|'avatar'|'banner'='';
-  function save(){ updateStorefront({...form}); }
+
+  onMount(() => {
+    void loadCreatorData(true).catch((error) => showToast(error instanceof Error ? error.message : 'Storefront data could not be loaded','warning'));
+  });
+
+  async function save(){
+    if(saving)return;
+    saving=true;
+    const saved=await updateStorefront({...form,sections:{...form.sections}});
+    if(saved){
+      form={...saved,sections:{...saved.sections}};
+      loadedSnapshot=JSON.stringify(saved);
+    }
+    saving=false;
+  }
+
   function toggleSection(key:string){ form={...form,sections:{...form.sections,[key]:form.sections[key]===false}}; }
+
   async function uploadMedia(kind:'avatar'|'banner',file?:File){
-    if(!file)return; mediaUploading=kind;
+    if(!file||mediaUploading)return;
+    const field=kind==='avatar'?'avatar':'banner';
+    const flag=kind==='avatar'?'hasAvatar':'hasBanner';
+    const previous=get(creatorProfile)[field];
+    const localPreview=URL.createObjectURL(file);
+    mediaUploading=kind;
+    creatorProfile.update(profile=>({...profile,[field]:localPreview}));
+    showToast(`Uploading ${kind==='avatar'?'store logo':'store banner'}…`,'info');
+
     try{
       const signed=await apiRequest<{path:string;token:string}>("/api/vendor/media",{method:'POST',body:JSON.stringify({kind,file:{name:file.name,size:file.size,type:file.type}})});
       const {error}=await getSupabaseBrowserClient().storage.from(kind==='avatar'?'avatars':'storefront-banners').uploadToSignedUrl(signed.path,signed.token,file,{contentType:file.type});
       if(error)throw error;
-      await apiRequest('/api/vendor/media',{method:'PATCH',body:JSON.stringify({kind,path:signed.path})});
-      await loadCreatorData(true); showToast(`${kind==='avatar'?'Logo':'Banner'} updated`,'success');
-    }catch(error){showToast(error instanceof Error?error.message:'Image upload failed','warning');}
-    finally{mediaUploading='';}
+      const updated=await apiRequest<{url:string}>('/api/vendor/media',{method:'PATCH',body:JSON.stringify({kind,path:signed.path})});
+      creatorProfile.update(profile=>{
+        const next={...profile,[field]:updated.url,[flag]:true};
+        return {...next,completion:calculateStorefrontCompletion(get(storefront),next)};
+      });
+      showToast(`${kind==='avatar'?'Store logo':'Store banner'} updated`,'success');
+    }catch(error){
+      creatorProfile.update(profile=>({...profile,[field]:previous}));
+      showToast(error instanceof Error?error.message:'Image upload failed','warning');
+    }finally{
+      URL.revokeObjectURL(localPreview);
+      mediaUploading='';
+      if(kind==='avatar'&&avatarInput)avatarInput.value='';
+      if(kind==='banner'&&bannerInput)bannerInput.value='';
+    }
   }
 </script>
 
 <svelte:head><title>Storefront Editor — Creator Hub — AssetGuru</title></svelte:head>
-<header class="page-head"><div><span class="eyebrow">Public presence</span><h1>Shape your <span class="gradient-text">storefront.</span></h1><p>Build a recognisable creator home without sacrificing marketplace clarity or buyer trust.</p></div><div class="head-actions"><a class="button button-secondary" href={$creatorProfile.slug ? `/creators/${$creatorProfile.slug}` : "/creators"}><Icon name="eye" size={17}/> View live store</a><button class="button button-primary" type="button" onclick={save}><Icon name="check" size={17}/> Save storefront</button></div></header>
+<header class="page-head"><div><span class="eyebrow">Public presence</span><h1>Shape your <span class="gradient-text">storefront.</span></h1><p>Build a recognisable creator home without sacrificing marketplace clarity or buyer trust.</p></div><div class="head-actions"><a class="button button-secondary" href={$creatorProfile.slug ? `/creators/${$creatorProfile.slug}` : "/creators"}><Icon name="eye" size={17}/> View live store</a><button class="button button-primary" type="button" disabled={saving||$creatorLoading} onclick={save}><Icon name="check" size={17}/> {saving?'Saving…':'Save storefront'}</button></div></header>
+{#if $creatorLoadError}<div class="load-state error"><Icon name="alert" size={17}/><span><b>Storefront data could not be loaded</b><small>{$creatorLoadError}</small></span><button type="button" onclick={()=>loadCreatorData(true)}>Try again</button></div>{:else if $creatorLoading&&!$creatorLoaded}<div class="load-state"><Icon name="clock" size={17}/><span><b>Loading your saved storefront…</b><small>Your stored profile, images and completion status are being refreshed.</small></span></div>{/if}
 
 <input class="hidden-file" bind:this={avatarInput} type="file" accept="image/jpeg,image/png,image/webp" onchange={(event)=>uploadMedia('avatar',selectedFile(event))}/><input class="hidden-file" bind:this={bannerInput} type="file" accept="image/jpeg,image/png,image/webp" onchange={(event)=>uploadMedia('banner',selectedFile(event))}/>
 
 <div class="editor-layout">
-  <aside class="sections glass">{#each sectionLinks as item}<button class:active={section===item.label} type="button" onclick={() => section=item.label}><Icon name={item.icon} size={17}/><span>{item.label}</span></button>{/each}<div class="profile-score"><span><b>{Math.round($creatorProfile.completion)}%</b><small>Profile complete</small></span><progress max="100" value={$creatorProfile.completion}></progress><p>{$creatorProfile.completion >= 100 ? 'Storefront complete. Stripe payouts are configured separately.' : 'Complete your identity, support and visual details to reach 100%.'}</p></div></aside>
+  <aside class="sections glass">{#each sectionLinks as item}<button class:active={section===item.label} type="button" onclick={() => section=item.label}><Icon name={item.icon} size={17}/><span>{item.label}</span></button>{/each}<div class="profile-score"><span><b>{Math.round($creatorProfile.completion)}%</b><small>Profile complete</small></span><progress max="100" value={$creatorProfile.completion}></progress><p>{$creatorProfile.completion >= 100 ? 'Storefront complete. Stripe payouts are configured separately.' : `Still needed: ${missingItems.join(', ') || 'save your latest changes'}.`}</p></div></aside>
 
   <main class="form-panel glass">
     {#if section==='Brand & profile'}
@@ -70,13 +119,14 @@
   <aside class="preview-wrap">
     <div class="preview-tools glass"><span>Live preview</span><div><button class:active={previewMode==='desktop'} type="button" onclick={() => previewMode='desktop'}><Icon name="grid" size={16}/></button><button class:active={previewMode==='mobile'} type="button" onclick={() => previewMode='mobile'}><Icon name="menu" size={16}/></button></div></div>
     <div class:mobile={previewMode==='mobile'} class="preview glass" data-accent={form.accent}>
-      <div class="preview-banner"><img src={$creatorProfile.banner} alt=""/></div><div class="preview-id"><img src={$creatorProfile.avatar} alt=""/><div><span>VERIFIED CREATOR</span><h2>{form.displayName || 'Creator name'}</h2><p>{form.tagline || 'Your store tagline'}</p></div><button type="button">Follow</button></div><div class="preview-stats"><span><b>{$creatorProfile.rating || '—'}</b><small>rating</small></span>{#if form.showSales}<span><b>{$creatorProducts.reduce((sum,item)=>sum+item.sales,0).toLocaleString('en-GB')}</b><small>sales</small></span>{/if}{#if form.showFollowers}<span><b>{$creatorProfile.followers.toLocaleString('en-GB')}</b><small>followers</small></span>{/if}<span><b>{$creatorProducts.filter((item)=>item.status==='Published').length}</b><small>products</small></span></div>{#if form.vacationMode}<div class="vacation-banner"><Icon name="clock" size={14}/> This creator is away. Replies may take longer.</div>{/if}{#if featured}<div class="featured"><span>FEATURED RELEASE</span><img src={featured.image} alt=""/><h3>{featured.title}</h3><p>{featured.category} · v{featured.version}</p><strong>£{featured.price.toFixed(2)}</strong></div>{/if}<div class="about"><h3>About {form.displayName}</h3><p>{form.bio}</p></div>
+      <div class="preview-banner"><img src={$creatorProfile.banner} alt=""/></div><div class="preview-id"><img src={$creatorProfile.avatar} alt=""/><div><span>{$creatorProfile.status==='approved'?'VERIFIED CREATOR':'PENDING APPROVAL'}</span><h2>{form.displayName || 'Creator name'}</h2><p>{form.tagline || 'Your store tagline'}</p></div><button type="button">Follow</button></div><div class="preview-stats"><span><b>{$creatorProfile.rating || '—'}</b><small>rating</small></span>{#if form.showSales}<span><b>{$creatorProducts.reduce((sum,item)=>sum+item.sales,0).toLocaleString('en-GB')}</b><small>sales</small></span>{/if}{#if form.showFollowers}<span><b>{$creatorProfile.followers.toLocaleString('en-GB')}</b><small>followers</small></span>{/if}<span><b>{$creatorProducts.filter((item)=>item.status==='Published').length}</b><small>products</small></span></div>{#if form.vacationMode}<div class="vacation-banner"><Icon name="clock" size={14}/> This creator is away. Replies may take longer.</div>{/if}{#if featured}<div class="featured"><span>FEATURED RELEASE</span><img src={featured.image} alt=""/><h3>{featured.title}</h3><p>{featured.category} · v{featured.version}</p><strong>£{featured.price.toFixed(2)}</strong></div>{/if}<div class="about"><h3>About {form.displayName}</h3><p>{form.bio}</p></div>
     </div>
   </aside>
 </div>
 
 <style>
   .page-head{margin-bottom:18px;display:flex;align-items:end;justify-content:space-between;gap:20px}.page-head h1{margin:10px 0 7px;font-size:clamp(2.6rem,4vw,4.2rem);line-height:.96;letter-spacing:-.06em}.page-head p{max-width:720px;margin:0;color:#aab5c8}.head-actions{display:flex;gap:8px}.editor-layout{display:grid;grid-template-columns:185px minmax(0,1fr) 340px;gap:12px;align-items:start}.sections{position:sticky;top:102px;padding:9px;border-radius:14px}.sections>button{width:100%;min-height:43px;padding:0 10px;display:flex;align-items:center;gap:9px;border:1px solid transparent;border-radius:8px;color:#718096;background:transparent;cursor:pointer;text-align:left;font-size:8px;font-weight:800}.sections>button.active,.sections>button:hover{color:#00e5ff;border-color:#27547a;background:#08162a}.profile-score{margin-top:10px;padding:13px 9px;border-top:1px solid #183352}.profile-score span{display:grid}.profile-score b{font-size:18px}.profile-score small{color:#718096;font-size:7px}.profile-score progress{width:100%;height:5px;margin:8px 0;border:0}.profile-score progress::-webkit-progress-bar{background:#12243d}.profile-score progress::-webkit-progress-value{background:linear-gradient(90deg,#00e5ff,#8b5cf6)}.profile-score p{color:#718096;font-size:7px;line-height:1.45}.form-panel{padding:21px;border-radius:15px}.panel-title{margin-bottom:18px}.panel-title h2{margin:7px 0 4px;font-size:21px}.panel-title p{margin:0;color:#718096;font-size:8px}.form-panel>label,.two label{display:grid;gap:7px;color:#aab5c8;font-size:9px;font-weight:750}.form-panel input,.form-panel select,.form-panel textarea{width:100%;padding:0 11px;border:1px solid #183352;border-radius:8px;outline:0;color:#f5f8ff;background:#050a16}.form-panel input,.form-panel select{min-height:43px}.form-panel textarea{padding-block:10px;resize:vertical;line-height:1.5}.form-panel input:focus,.form-panel textarea:focus,.form-panel select:focus{border-color:#00e5ff}.form-panel label small{color:#718096;font-size:7px;font-weight:500}.two{margin:13px 0;display:grid;grid-template-columns:1fr 1fr;gap:11px}.media-fields{margin-bottom:16px;display:grid;grid-template-columns:125px 1fr;gap:11px}.avatar-field,.banner-field{position:relative;overflow:hidden;border:1px solid #183352;border-radius:10px;background:#071225}.avatar-field img{width:100%;height:125px;object-fit:contain}.banner-field img{width:100%;height:125px;object-fit:cover}.media-fields button{position:absolute;right:7px;bottom:7px;padding:6px 8px;display:flex;align-items:center;gap:5px;border:1px solid #27547a;border-radius:6px;color:#00e5ff;background:rgb(2 4 13/.86);cursor:pointer;font-size:7px}.banner-field>small{position:absolute;bottom:10px;left:8px;color:#f5f8ff;font-size:6px;text-shadow:0 1px 3px #000}.form-panel fieldset{margin:16px 0 0;padding:0;border:0}.form-panel legend{margin-bottom:9px;color:#aab5c8;font-size:9px;font-weight:750}.accents{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.accents button{min-height:50px;padding:8px;display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;border:1px solid #183352;border-radius:8px;color:#718096;background:#071225;cursor:pointer;text-transform:capitalize}.accents button.active{color:#f5f8ff;border-color:var(--accent)}.accents i{width:23px;height:23px;border-radius:6px;background:var(--accent)}.accents button[data-accent='cyan']{--accent:#00e5ff}.accents button[data-accent='violet']{--accent:#8b5cf6}.accents button[data-accent='magenta']{--accent:#ff3fd8}.layout-list{border:1px solid #183352;border-radius:10px;overflow:hidden}.layout-list article{min-height:58px;padding:8px 11px;display:grid;grid-template-columns:20px auto 1fr auto auto;gap:9px;align-items:center;border-top:1px solid #183352}.layout-list article:first-child{border-top:0}.layout-list>article>i{color:#718096;font-size:8px;font-style:normal}.layout-list>article>svg{color:#00e5ff}.layout-list article>span{display:grid}.layout-list b{font-size:9px}.layout-list small{color:#718096;font-size:7px}.layout-list label{display:flex;align-items:center;gap:6px;color:#718096;font-size:7px}.layout-list input{width:auto;min-height:auto;accent-color:#00e5ff}.layout-list article>button{border:0;color:#718096;background:transparent;cursor:grab}.layout-tip,.policy-note{margin-top:14px;padding:13px;display:flex;gap:9px;border:1px solid #2d3d66;border-radius:9px;color:#8b5cf6;background:rgb(139 92 246/.06)}.layout-tip span,.policy-note span{display:grid}.layout-tip b,.policy-note b{color:#f5f8ff;font-size:8px}.layout-tip small,.policy-note small{margin-top:3px;color:#8d9bb1;font-size:7px;line-height:1.45}.product-choice{display:grid;gap:8px}.product-choice label{padding:9px;display:grid;grid-template-columns:auto 70px 1fr auto;gap:10px;align-items:center;border:1px solid #183352;border-radius:9px;background:#071225;cursor:pointer}.product-choice label.selected{border-color:#00e5ff;background:rgb(0 229 255/.05)}.product-choice input{width:auto;min-height:auto;accent-color:#00e5ff}.product-choice img{width:70px;height:46px;object-fit:cover;border-radius:6px}.product-choice span{display:grid}.product-choice b{font-size:9px}.product-choice small{color:#718096;font-size:7px}.product-choice em{color:#24d89a;font-size:7px;font-style:normal}.form-panel>.button{margin-top:14px}.toggle-list{display:grid;gap:9px}.toggle-list label{padding:14px;display:grid;grid-template-columns:auto 1fr;gap:10px;border:1px solid #183352;border-radius:9px;background:#071225}.toggle-list label.vacation{border-color:rgb(255 181 71/.3)}.toggle-list input{width:auto;min-height:auto;margin-top:3px;accent-color:#00e5ff}.toggle-list span{display:grid}.toggle-list b{font-size:9px}.toggle-list small{margin-top:3px;color:#718096;font-size:7px;line-height:1.45}.public-preview{margin-top:14px;padding:14px;display:flex;gap:10px;border:1px solid #27547a;border-radius:9px;color:#00e5ff}.public-preview span{display:grid}.public-preview b{color:#f5f8ff;font-size:9px}.public-preview small{margin-top:3px;color:#718096;font-size:7px}.preview-wrap{position:sticky;top:102px}.preview-tools{margin-bottom:8px;padding:7px 9px;display:flex;align-items:center;justify-content:space-between;border-radius:10px;color:#718096;font-size:8px}.preview-tools>div{padding:3px;display:flex;border:1px solid #183352;border-radius:7px}.preview-tools button{width:29px;height:27px;display:grid;place-items:center;border:0;border-radius:5px;color:#718096;background:transparent;cursor:pointer}.preview-tools button.active{color:#06111b;background:#00e5ff}.preview{--accent:#00e5ff;overflow:hidden;border-radius:15px;transition:max-width .25s ease}.preview[data-accent='violet']{--accent:#8b5cf6}.preview[data-accent='magenta']{--accent:#ff3fd8}.preview.mobile{max-width:235px;margin:auto}.preview-banner img{width:100%;height:105px;object-fit:cover}.preview-id{position:relative;padding:14px;display:grid;grid-template-columns:52px 1fr auto;gap:9px;align-items:center}.preview-id>img{width:52px;height:52px;margin-top:-40px;border:2px solid var(--accent);border-radius:12px;background:#071225}.preview-id>div{display:grid}.preview-id span{color:var(--accent);font-size:6px;font-weight:900}.preview-id h2{margin:3px 0;font-size:13px}.preview-id p{margin:0;color:#718096;font-size:6px;line-height:1.3}.preview-id button{padding:6px 8px;border:1px solid var(--accent);border-radius:6px;color:var(--accent);background:transparent;font-size:6px}.preview-stats{padding:10px 14px;display:flex;border-top:1px solid #183352;border-bottom:1px solid #183352}.preview-stats span{flex:1;display:grid;text-align:center}.preview-stats span+span{border-left:1px solid #183352}.preview-stats b{font-size:9px}.preview-stats small{color:#718096;font-size:5px}.vacation-banner{padding:8px 10px;display:flex;align-items:center;gap:6px;color:#ffb547;background:rgb(255 181 71/.08);font-size:6px}.featured{margin:12px;padding:10px;border:1px solid #183352;border-radius:9px}.featured>span{color:var(--accent);font-size:6px;font-weight:900}.featured img{width:100%;margin:7px 0;aspect-ratio:16/8;object-fit:cover;border-radius:6px}.featured h3{margin:0;font-size:10px}.featured p{margin:3px 0;color:#718096;font-size:6px}.featured strong{color:var(--accent);font-size:11px}.about{padding:0 13px 15px}.about h3{font-size:9px}.about p{color:#718096;font-size:6px;line-height:1.5}
+  .load-state{margin:-4px 0 16px;padding:12px 14px;display:flex;gap:10px;align-items:center;border:1px solid #27547a;border-radius:10px;color:#00e5ff;background:#071225}.load-state span{display:grid}.load-state b{color:#f5f8ff;font-size:9px}.load-state small{margin-top:3px;color:#aab5c8;font-size:8px}.load-state button{margin-left:auto;min-height:34px;padding:0 11px;border:1px solid #27547a;border-radius:7px;color:#00e5ff;background:#050a16;cursor:pointer}.load-state.error{border-color:rgb(255 181 71/.45);color:#ffb547}.head-actions button:disabled{opacity:.55;cursor:wait}
   @media(max-width:1250px){.editor-layout{grid-template-columns:170px 1fr}.preview-wrap{grid-column:1/-1;position:static}.preview{max-width:680px;margin:auto}.preview.mobile{max-width:235px}}
   @media(max-width:820px){.page-head{align-items:start;flex-direction:column}.head-actions{width:100%}.head-actions .button{flex:1}.editor-layout{grid-template-columns:1fr}.sections{position:static;display:flex;overflow-x:auto}.sections>button{min-width:max-content}.profile-score{display:none}.two,.media-fields{grid-template-columns:1fr}}
   @media(max-width:560px){.head-actions{display:grid}.product-choice label{grid-template-columns:auto 60px 1fr}.product-choice em{display:none}.accents{grid-template-columns:1fr}.preview{max-width:100%}}

@@ -4,7 +4,7 @@
     | 'search' | 'arrow' | 'shield' | 'lock' | 'max' | 'spark' | 'menu' | 'close'
     | 'star' | 'chevron' | 'user' | 'tag' | 'community' | 'support' | 'upload'
     | 'check' | 'alert' | 'trash' | 'grid' | 'list' | 'package' | 'clock' | 'download'
-    | 'store' | 'sliders' | 'eye' | 'chart' | 'plus' | 'minus' | 'mail' | 'image' | 'settings' = 'spark';
+    | 'store' | 'sliders' | 'eye' | 'chart' | 'plus' | 'minus' | 'mail' | 'image' | 'settings' | 'refresh' = 'spark';
   export let size = 22;
   export let strokeWidth = 1.8;
 </script>
@@ -98,6 +98,8 @@
     <rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>
   {:else if name === 'image'}
     <rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m21 15-5-5L5 20"/>
+  {:else if name === 'refresh'}
+    <path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M6.1 9A7 7 0 0 1 18.5 6.5L20 8"/><path d="M17.9 15A7 7 0 0 1 5.5 17.5L4 16"/>
   {:else if name === 'settings'}
     <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>
   {/if}
