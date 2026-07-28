@@ -29,6 +29,18 @@ const completeSchema = z.object({
 });
 const safe = (value: string) => value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(-150) || 'file';
 
+const objectName = (path?: string | null) => {
+  if (!path) return '';
+  const value = path.split('/').filter(Boolean).pop() ?? '';
+  try { return decodeURIComponent(value); } catch { return value; }
+};
+const formatBytes = (value: number | null | undefined) => {
+  const bytes = Number(value ?? 0);
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  return `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`;
+};
+const formatDate = (value: string) => new Intl.DateTimeFormat('en-GB', { day:'numeric', month:'short', year:'numeric' }).format(new Date(value));
+
 async function removeStoredObjects(paths: Array<string | null | undefined>) {
   const admin = getSupabaseAdmin();
   const r2Paths = paths.filter(isR2ObjectKey);
@@ -37,6 +49,48 @@ async function removeStoredObjects(paths: Array<string | null | undefined>) {
   if (legacyPaths.length) {
     const { error } = await admin.storage.from('asset-packages').remove(legacyPaths);
     if (error) throw error;
+  }
+}
+
+export async function GET({ locals, params }: import('./$types').RequestEvent) {
+  try {
+    const { user } = await requireRole(locals, ['vendor']);
+    const admin = getSupabaseAdmin();
+    const { data: vendor, error: vendorError } = await admin.from('vendor_profiles').select('id').eq('user_id', user.id).single();
+    if (vendorError) throw vendorError;
+    if (!vendor) throw Object.assign(new Error('Vendor profile not found.'), { status: 404 });
+    const { data: product } = await admin.from('products').select('id').eq('vendor_id', vendor.id).eq('slug', params.slug).maybeSingle();
+    if (!product) return json({ message: 'Product not found.' }, { status: 404 });
+    const { data: versions, error } = await admin
+      .from('product_versions')
+      .select('id,version,status,is_current,package_path,documentation_path,file_size_bytes,release_notes,created_at')
+      .eq('product_id', product.id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    const storedVersions = await Promise.all((versions ?? []).map(async (entry) => {
+      const packageCheck = isR2ObjectKey(entry.package_path)
+        ? await verifyR2Object(entry.package_path, Number(entry.file_size_bytes))
+        : { ok: Boolean(entry.package_path) };
+      const documentationCheck = !entry.documentation_path || !isR2ObjectKey(entry.documentation_path)
+        ? { ok: true }
+        : await verifyR2Object(entry.documentation_path);
+      return {
+        id: entry.id,
+        version: entry.version,
+        status: entry.status,
+        isCurrent: Boolean(entry.is_current),
+        verified: packageCheck.ok && documentationCheck.ok,
+        size: formatBytes(entry.file_size_bytes),
+        created: formatDate(entry.created_at),
+        releaseNotes: entry.release_notes ?? '',
+        packageName: objectName(entry.package_path) || `asset-package-${entry.version}.zip`,
+        documentationName: objectName(entry.documentation_path) || undefined
+      };
+    }));
+    return json({ versions: storedVersions });
+  } catch (error) {
+    const e = apiError(error);
+    return json({ message: e.message }, { status: e.status });
   }
 }
 
