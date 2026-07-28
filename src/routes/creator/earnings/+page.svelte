@@ -1,8 +1,12 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { onMount } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import StatusPill from '$lib/components/StatusPill.svelte';
-  import { payoutHistory, creatorProfile, connectStripe } from '$lib/stores/creator';
+  import { payoutHistory, creatorProfile, connectStripe, loadCreatorPayouts } from '$lib/stores/creator';
+  import { showToast } from '$lib/stores/marketplace';
+
+  onMount(() => { void loadCreatorPayouts().catch((error) => showToast(error instanceof Error ? error.message : 'Payout history could not be loaded','warning')); });
 
   $: gross = $payoutHistory.reduce((sum, payout) => sum + Number(payout.gross || 0), 0);
   $: refunds = $payoutHistory.reduce((sum, payout) => sum + Number(payout.refunds || 0), 0);

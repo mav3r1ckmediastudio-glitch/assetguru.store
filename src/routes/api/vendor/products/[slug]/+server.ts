@@ -4,6 +4,7 @@ import { apiError, getSupabaseAdmin, requireRole, writeAudit } from '$lib/server
 import { taxonomyCategory } from '$lib/data/category-taxonomy';
 import { parseShowcaseVideoUrl } from '$lib/showcase-video';
 import { deleteR2Objects, isR2ObjectKey, verifyR2Object } from '$lib/server/r2-storage';
+import { loadVendorProduct } from '$lib/server/vendor-loaders';
 
 const schema = z.object({
   title: z.string().trim().min(1).max(120).optional(),
@@ -57,6 +58,11 @@ async function legacyObjectExists(bucket: string, path: string) {
 async function packageObjectExists(path: string, expectedBytes?: number) {
   if (isR2ObjectKey(path)) return (await verifyR2Object(path, expectedBytes)).ok;
   return legacyObjectExists('asset-packages', path);
+}
+
+export async function GET({locals,params}:import('./$types').RequestEvent){
+  try{const {user}=await requireRole(locals,['vendor']);return json(await loadVendorProduct(getSupabaseAdmin(),user.id,params.slug));}
+  catch(error){const e=apiError(error);return json({message:e.message},{status:e.status});}
 }
 
 export async function PATCH({ locals, request, params }: import('./$types').RequestEvent) {

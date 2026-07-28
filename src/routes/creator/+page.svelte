@@ -1,11 +1,14 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import MetricCard from '$lib/components/MetricCard.svelte';
   import LineChart from '$lib/components/LineChart.svelte';
   import StatusPill from '$lib/components/StatusPill.svelte';
-  import { creatorOrders, creatorProfile, revenueSeries, salesSeries, reviewQueue, creatorProducts, creatorTotals, payoutHistory } from '$lib/stores/creator';
+  import { creatorOrders, creatorProfile, revenueSeries, salesSeries, reviewQueue, creatorProducts, creatorTotals, payoutHistory, loadCreatorDashboard } from '$lib/stores/creator';
+  import { showToast } from '$lib/stores/marketplace';
 
   let range = '30 days';
+  onMount(() => { void loadCreatorDashboard().catch((error) => showToast(error instanceof Error ? error.message : 'Creator dashboard could not be loaded','warning')); });
   $: topProducts = [...$creatorProducts].filter((item) => item.status === 'Published').sort((a,b) => b.revenue-a.revenue).slice(0,5);
   $: pending = $creatorProducts.filter((item) => item.status === 'In review' || item.status === 'Changes required');
   $: averageOrder = $creatorTotals.sales ? $creatorTotals.revenue / $creatorTotals.sales : 0;

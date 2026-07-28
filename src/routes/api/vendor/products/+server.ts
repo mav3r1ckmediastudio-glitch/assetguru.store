@@ -4,6 +4,7 @@ import { apiError, getSupabaseAdmin, requireRole, writeAudit } from '$lib/server
 import { taxonomyCategory } from '$lib/data/category-taxonomy';
 import { parseShowcaseVideoUrl } from '$lib/showcase-video';
 import { createR2UploadTarget, deleteR2Objects, makeR2ObjectKey } from '$lib/server/r2-storage';
+import { loadVendorProducts } from '$lib/server/vendor-loaders';
 
 const baseFile=z.object({name:z.string().min(1).max(255),size:z.number().int().min(1),type:z.string().max(120).default('application/octet-stream')});
 const packageFile=baseFile.refine(file=>file.size<=5*1024**3,'Asset packages cannot exceed 5 GB.');
@@ -26,6 +27,19 @@ const draftSchema=z.object({
 });
 const safe=(value:string)=>value.toLowerCase().replace(/[^a-z0-9._-]+/g,'-').replace(/^-+|-+$/g,'').slice(-150)||'file';
 const slugify=(value:string)=>value.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+
+export async function GET({locals,url}:import('./$types').RequestEvent){
+  try{
+    const {user}=await requireRole(locals,['vendor']);
+    return json(await loadVendorProducts(getSupabaseAdmin(),user.id,{
+      page:Number(url.searchParams.get('page')??1),
+      pageSize:Number(url.searchParams.get('pageSize')??24),
+      search:url.searchParams.get('search')??'',
+      status:url.searchParams.get('status')??'',
+      sort:url.searchParams.get('sort')??'Recently updated'
+    }));
+  }catch(error){const e=apiError(error);return json({message:e.message},{status:e.status});}
+}
 
 export async function POST({locals,request}:import('./$types').RequestEvent){
   let createdProductId:string|undefined;

@@ -1,12 +1,15 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { onMount } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import MetricCard from '$lib/components/MetricCard.svelte';
   import LineChart from '$lib/components/LineChart.svelte';
-  import { revenueSeries, salesSeries, trafficSources, creatorProducts, creatorTotals } from '$lib/stores/creator';
+  import { revenueSeries, salesSeries, trafficSources, creatorProducts, creatorTotals, loadCreatorAnalytics } from '$lib/stores/creator';
+  import { showToast } from '$lib/stores/marketplace';
 
   let range = '30 days';
   let product = 'All products';
+  onMount(() => { void loadCreatorAnalytics().catch((error) => showToast(error instanceof Error ? error.message : 'Analytics could not be loaded','warning')); });
   $: ranked = [...$creatorProducts].filter((item)=>item.status==='Published' && (product === 'All products' || item.title === product)).sort((a,b)=>b.views-a.views);
   $: avgConversion = ranked.length ? ranked.reduce((sum,item)=>sum+item.conversion,0)/ranked.length : 0;
   $: ratedProducts = ranked.filter((item) => item.rating > 0);
@@ -39,7 +42,7 @@
 
   <section class="audience glass"><div class="panel-head"><div><span class="eyebrow">Audience</span><h2>Buyer profile</h2></div></div><div class="empty-data"><Icon name="community" size={25}/><span><b>Privacy-safe audience data pending</b><small>Region, device and returning-buyer breakdowns are not fabricated before analytics events exist.</small></span></div></section>
 
-  <section class="products glass"><div class="panel-head"><div><span class="eyebrow">Catalogue comparison</span><h2>Product performance</h2></div><a href="/creator/products">Manage products</a></div><div class="product-head"><span>Product</span><span>Views</span><span>Conversion</span><span>Sales</span><span>Revenue</span><span>Rating</span></div>{#if ranked.length}{#each ranked as item}<a href={`/creator/products/${item.slug}`} class="product-row"><span><img src={item.image} alt=""/><b>{item.title}</b></span><strong>{item.views.toLocaleString('en-GB')}</strong><strong>{item.conversion.toFixed(2)}%</strong><strong>{item.sales.toLocaleString('en-GB')}</strong><strong>£{item.revenue.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong><em>{item.rating ? `${item.rating} ★` : 'New'}</em></a>{/each}{:else}<div class="empty-data"><Icon name="package" size={25}/><span><b>No published products</b><small>Product analytics will begin after the first approved release.</small></span></div>{/if}</section>
+  <section class="products glass"><div class="panel-head"><div><span class="eyebrow">Catalogue comparison</span><h2>Product performance</h2></div><a href="/creator/products">Manage products</a></div><div class="product-head"><span>Product</span><span>Views</span><span>Conversion</span><span>Sales</span><span>Revenue</span><span>Rating</span></div>{#if ranked.length}{#each ranked as item}<a href={`/creator/products/${item.slug}`} class="product-row"><span><img src={item.image} alt="" loading="lazy" decoding="async"/><b>{item.title}</b></span><strong>{item.views.toLocaleString('en-GB')}</strong><strong>{item.conversion.toFixed(2)}%</strong><strong>{item.sales.toLocaleString('en-GB')}</strong><strong>£{item.revenue.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong><em>{item.rating ? `${item.rating} ★` : 'New'}</em></a>{/each}{:else}<div class="empty-data"><Icon name="package" size={25}/><span><b>No published products</b><small>Product analytics will begin after the first approved release.</small></span></div>{/if}</section>
 
   <section class="searches glass"><div class="panel-head"><div><span class="eyebrow">Search demand</span><h2>Terms leading to your store</h2></div></div><div class="empty-data"><Icon name="search" size={25}/><span><b>No search events recorded</b><small>Search-term reporting will stay empty until production discovery telemetry is enabled.</small></span></div></section>
 </div>

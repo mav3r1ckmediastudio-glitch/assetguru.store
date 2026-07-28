@@ -8,7 +8,7 @@
   import StatusPill from '$lib/components/StatusPill.svelte';
   import CreatorImageUploader from '$lib/components/CreatorImageUploader.svelte';
   import { CATEGORY_COUNT, CATEGORY_TAXONOMY, SUBCATEGORY_COUNT } from '$lib/data/category-taxonomy';
-  import { creatorProfile, creatorProducts, loadCreatorData, removeCreatorProduct, setProductStatus, storefront, updateCreatorProduct } from '$lib/stores/creator';
+  import { creatorProfile, creatorProducts, loadCreatorProduct, removeCreatorProduct, setProductStatus, storefront, updateCreatorProduct } from '$lib/stores/creator';
   import { showToast } from '$lib/stores/marketplace';
   import { apiRequest } from '$lib/api';
   import { uploadFileToR2, type R2BrowserUpload } from '$lib/r2-upload';
@@ -54,6 +54,8 @@
   $: subcategoryOptions = selectedCategory?.subcategories ?? [];
   $: if (subcategory && !subcategoryOptions.includes(subcategory)) subcategory = '';
 
+  let productLoading = true;
+  let productLoadError = '';
   let editorReady = false;
   let recoveredEditorDraft = false;
   let editorSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -226,6 +228,17 @@
 
   onMount(() => {
     void loadCategoryOptions();
+    void (async () => {
+      productLoading = true;
+      productLoadError = '';
+      try {
+        const slug = page.params.slug;
+        if (!slug) throw new Error('The product address is missing.');
+        await loadCreatorProduct(slug);
+      }
+      catch (error) { productLoadError = error instanceof Error ? error.message : 'The product could not be loaded.'; }
+      finally { productLoading = false; }
+    })();
     return () => { if (editorSaveTimer) clearTimeout(editorSaveTimer); };
   });
 
@@ -260,7 +273,7 @@
     const saved = await save();
     if (saved) {
       const submitted = await setProductStatus(product.slug, 'In review');
-      if (submitted) { clearEditorDraft(); await loadCreatorData(true); }
+      if (submitted) { clearEditorDraft(); await loadCreatorProduct(product.slug); }
     }
     reviewSubmitting = false;
   }
@@ -306,7 +319,7 @@
       }
       previewMessage = 'Verifying previews…';
       await apiRequest(`/api/vendor/products/${product.slug}/previews`, { method:'PATCH', body:JSON.stringify({ paths:preparedPaths }) });
-      await loadCreatorData(true);
+      await loadCreatorProduct(product.slug);
       previewFiles = [];
       previewProgress = 100;
       previewMessage = 'Preview gallery uploaded and verified.';
@@ -356,7 +369,7 @@
       }
       versionUploadMessage = 'Upload complete. Verifying the stored object size…';
       await apiRequest(`/api/vendor/products/${product.slug}/versions`, { method:'PATCH', body:JSON.stringify({ versionId:response.versionId, packageSize:selectedPackage.size, documentationSize:selectedDocumentation?.size }) });
-      await loadCreatorData(true);
+      await loadCreatorProduct(product.slug);
       await loadStoredPackages(product.slug);
       clearVersionDraft();
       versionNumber = '';
@@ -462,8 +475,10 @@
       <section class="stats glass"><h3>Product performance</h3><div><span><small>Revenue</small><b>£{product.revenue.toLocaleString('en-GB',{minimumFractionDigits:2})}</b></span><span><small>Sales</small><b>{product.sales.toLocaleString('en-GB')}</b></span><span><small>Conversion</small><b>{product.conversion ? `${product.conversion}%` : '—'}</b></span><span><small>Rating</small><b>{product.rating ? `${product.rating} ★` : '—'}</b></span></div><a href="/creator/analytics">Open analytics →</a></section>
     </aside>
   </div>
+{:else if productLoading}
+  <section class="empty-page glass"><span class="eyebrow">Creator products</span><h1>Loading product…</h1><p>Retrieving this listing and its current saved version.</p></section>
 {:else}
-  <section class="empty-page glass"><span class="eyebrow">Creator products</span><h1>Product unavailable.</h1><p>This product does not exist or does not belong to your creator account.</p><a class="button button-primary" href="/creator/products">Return to products</a></section>
+  <section class="empty-page glass"><span class="eyebrow">Creator products</span><h1>Product unavailable.</h1><p>{productLoadError || 'This product does not exist or does not belong to your creator account.'}</p><a class="button button-primary" href="/creator/products">Return to products</a></section>
 {/if}
 
 <style>

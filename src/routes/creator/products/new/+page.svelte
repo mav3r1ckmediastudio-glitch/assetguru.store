@@ -1,13 +1,12 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
-  import { get } from 'svelte/store';
   import { onMount, tick } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import FileGlyph from '$lib/components/FileGlyph.svelte';
   import CreatorImageUploader from '$lib/components/CreatorImageUploader.svelte';
   import { CATEGORY_COUNT, CATEGORY_TAXONOMY, SUBCATEGORY_COUNT } from '$lib/data/category-taxonomy';
-  import { creatorProducts, loadCreatorData } from '$lib/stores/creator';
+  import { loadCreatorData, loadCreatorProduct } from '$lib/stores/creator';
   import { showToast } from '$lib/stores/marketplace';
   import { platformSettings } from '$lib/stores/admin';
   import { apiRequest } from '$lib/api';
@@ -299,9 +298,8 @@
       }
 
       draftSaveMessage = 'Confirming the saved private draft…';
-      await loadCreatorData(true);
-      const confirmed = get(creatorProducts).find((product) => product.slug === createdSlug && product.status === 'Draft');
-      if (!confirmed) throw new Error('The draft was created but could not be confirmed in Creator Products.');
+      const confirmed = await loadCreatorProduct(createdSlug);
+      if (confirmed.status !== 'Draft') throw new Error('The draft was created but could not be confirmed in Creator Products.');
       if (packageFile) {
         const stored = await apiRequest<{versions:Array<{verified:boolean}>}>(`/api/vendor/products/${createdSlug}/versions`, { cache:'no-store' });
         if (!stored.versions.some((item) => item.verified)) throw new Error('The draft was saved, but the private ZIP could not be verified.');
@@ -323,7 +321,7 @@
           try { await apiRequest(`/api/vendor/products/${createdSlug}/previews`, { method:'DELETE', body:JSON.stringify({ paths:pendingPreviewPaths }) }); }
           catch (cleanupError) { console.error('Pending preview cleanup failed', cleanupError); }
         }
-        await loadCreatorData(true);
+        await loadCreatorProduct(createdSlug);
         clearLocalDraft();
         showToast(`${message} The listing details remain saved as a private draft.`, 'warning');
         await goto(`/creator/products/${createdSlug}${packageFile ? '?tab=files' : previewFiles.length ? '?tab=presentation' : ''}`);
@@ -397,7 +395,7 @@
           try { await apiRequest(`/api/vendor/products/${createdSlug}/previews`, { method:'DELETE', body:JSON.stringify({ paths:createdPreviewPaths }) }); }
           catch (cleanupError) { console.error('Pending preview cleanup failed', cleanupError); }
         }
-        await loadCreatorData(true);
+        await loadCreatorProduct(createdSlug);
         showToast(`${message} Your private draft is safe; retry from the product editor.`, 'warning');
         await goto(`/creator/products/${createdSlug}?tab=files`);
       } else {

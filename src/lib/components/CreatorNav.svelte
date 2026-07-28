@@ -1,8 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
   import Icon from './Icon.svelte';
-  import { creatorProfile } from '$lib/stores/creator';
-  import { creatorProducts } from '$lib/stores/creator';
+  import { creatorProductCounts, creatorProfile } from '$lib/stores/creator';
 
   const links = [
     { href:'/creator', label:'Dashboard', icon:'home' as const },
@@ -22,7 +21,7 @@
   </div>
   <nav aria-label="Creator dashboard">
     {#each links as link}
-      <a href={link.href} class:active={active(link.href)}><Icon name={link.icon} size={18}/><span>{link.label}</span>{#if link.href === '/creator/products'}<b>{$creatorProducts.length}</b>{/if}</a>
+      <a href={link.href} class:active={active(link.href)}><Icon name={link.icon} size={18}/><span>{link.label}</span>{#if link.href === '/creator/products'}<b>{$creatorProductCounts.all}</b>{/if}</a>
     {/each}
   </nav>
   <div class="completion"><div><span>Storefront profile</span><b>{Math.round($creatorProfile.completion)}%</b></div><progress max="100" value={$creatorProfile.completion}></progress><small>{$creatorProfile.completion >= 100 ? 'Storefront complete. Payments are configured separately.' : 'Complete your public storefront details to reach 100%.'}</small></div>

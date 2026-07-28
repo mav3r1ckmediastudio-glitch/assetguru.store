@@ -1,7 +1,10 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('../', import.meta.url).pathname;
+// fileURLToPath is required on Windows. URL.pathname returns /C:/... which
+// path.join can incorrectly expand to C:\\C:\\...
+const root = fileURLToPath(new URL('../', import.meta.url));
 const required = [
   'package.json', 'svelte.config.js', 'vite.config.ts', 'netlify.toml',
   'src/routes/+layout.svelte', 'src/routes/+page.svelte',

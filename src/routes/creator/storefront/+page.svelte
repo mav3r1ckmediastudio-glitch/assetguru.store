@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import Icon from '$lib/components/Icon.svelte';
-  import { calculateStorefrontCompletion, creatorLoadError, creatorLoaded, creatorLoading, creatorProfile, creatorProducts, storefront, updateStorefront, loadCreatorData, type StorefrontSettings } from '$lib/stores/creator';
+  import { calculateStorefrontCompletion, creatorLoadError, creatorLoaded, creatorLoading, creatorProfile, creatorProducts, storefront, updateStorefront, loadCreatorData, loadCreatorProductOptions, type StorefrontSettings } from '$lib/stores/creator';
   import { apiRequest } from '$lib/api';
   import { getSupabaseBrowserClient } from '$lib/supabase/client';
   import { showToast } from '$lib/stores/marketplace';
@@ -45,7 +45,7 @@
   let mediaUploading:''|'avatar'|'banner'='';
 
   onMount(() => {
-    void loadCreatorData(true).catch((error) => showToast(error instanceof Error ? error.message : 'Storefront data could not be loaded','warning'));
+    void Promise.all([loadCreatorData(true),loadCreatorProductOptions()]).catch((error) => showToast(error instanceof Error ? error.message : 'Storefront data could not be loaded','warning'));
   });
 
   async function save(){
