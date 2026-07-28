@@ -17,7 +17,7 @@ export async function POST({locals,request}:import('./$types').RequestEvent){
     const admin=getSupabaseAdmin();
     const [{data:settings},{data:products,error:productsError}]=await Promise.all([
       admin.from('marketplace_settings').select('*').eq('id',1).single(),
-      admin.from('products').select(`*,category:categories(commission_override),vendor:vendor_profiles(id,user_id,status,stripe_account_id,stripe_payouts_enabled,commission_percent),versions:product_versions(id,version,is_current,status)`).in('slug',unique.map(x=>x.slug)).eq('status','published')
+      admin.from('products').select(`*,category:categories(commission_override),vendor:vendor_profiles!products_vendor_id_fkey(id,user_id,status,stripe_account_id,stripe_payouts_enabled,commission_percent),versions:product_versions(id,version,is_current,status)`).in('slug',unique.map(x=>x.slug)).eq('status','published')
     ]);
     if(productsError)throw productsError;
     if(settings?.maintenance_mode)return json({message:'Purchasing is temporarily paused.'},{status:503});

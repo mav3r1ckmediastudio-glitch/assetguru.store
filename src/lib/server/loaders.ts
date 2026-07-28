@@ -33,7 +33,7 @@ export async function loadPublicCatalogue(supabase:SupabaseClient<any>) {
     { data: followRows, error: followError },
     { data: settingsRow, error: settingsError }
   ] = await Promise.all([
-    supabase.from('products').select(`*, category:categories(id,name,slug,accent), vendor:vendor_profiles(id,slug,display_name,handle,tagline,bio,response_time,location,specialties,avatar_path,banner_path,created_at,status), images:product_images(id,storage_path,alt_text,image_type,sort_order), versions:product_versions(id,version,file_size_bytes,is_current,status,approved_at,created_at), reviews:reviews(rating,title,body,created_at,status,buyer:profiles(display_name))`).eq('status','published').order('published_at',{ascending:false}),
+    supabase.from('products').select(`*, category:categories(id,name,slug,accent), vendor:vendor_profiles!products_vendor_id_fkey(id,slug,display_name,handle,tagline,bio,response_time,location,specialties,avatar_path,banner_path,created_at,status), images:product_images(id,storage_path,alt_text,image_type,sort_order), versions:product_versions(id,version,file_size_bytes,is_current,status,approved_at,created_at), reviews:reviews(rating,title,body,created_at,status,buyer:profiles(display_name))`).eq('status','published').order('published_at',{ascending:false}),
     supabase.from('categories').select('*').eq('visible',true).order('sort_order'),
     supabase.from('vendor_profiles').select('*').eq('status','approved').order('display_name'),
     supabase.from('creator_follows').select('vendor_id'),
@@ -179,7 +179,7 @@ export async function loadAdmin(supabase:SupabaseClient<any>) {
   const since=new Date(Date.now()-30*86400000).toISOString();
   const [vendorBundle,productsResult,casesResult,categoriesResult,allProductsResult,settingsResult,auditResult,ordersResult,reportItemsResult,publishedReviewsResult,downloadEventsResult] = await Promise.all([
     loadVendorApplications(supabase),
-    supabase.from('products').select(`*, vendor:vendor_profiles(display_name), category:categories(name), versions:product_versions(version,file_size_bytes,created_at,status)`).eq('status','in_review').order('updated_at',{ascending:false}),
+    supabase.from('products').select(`*, vendor:vendor_profiles!products_vendor_id_fkey(display_name), category:categories(name), versions:product_versions(version,file_size_bytes,created_at,status)`).eq('status','in_review').order('updated_at',{ascending:false}),
     supabase.from('admin_cases').select(`*, product:products(title), vendor:vendor_profiles(display_name), buyer:profiles!admin_cases_buyer_id_fkey(display_name), order:orders(order_number,status)`).order('created_at',{ascending:false}),
     supabase.from('categories').select('*').order('sort_order'),
     supabase.from('products').select('id,vendor_id,category_id,status'),
@@ -190,6 +190,9 @@ export async function loadAdmin(supabase:SupabaseClient<any>) {
     supabase.from('reviews').select('rating').eq('status','published'),
     supabase.from('download_events').select('entitlement:entitlements(order_item_id)')
   ]);
+
+  // The moderation queue must never silently look empty when its product query failed.
+  if (productsResult.error) throw productsResult.error;
 
   const products=productsResult.data??[];
   const vendors=vendorBundle.rawVendors??[];
