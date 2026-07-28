@@ -9,6 +9,9 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "verify": "node scripts/verify-source.mjs",
+    "verify:catalogue": "node scripts/verify-catalogue-scaling.mjs",
+    "test:catalogue:self": "node scripts/catalogue-staging-smoke.mjs --self-test",
+    "test:catalogue:staging": "node scripts/catalogue-staging-smoke.mjs",
     "db:types": "npx supabase gen types typescript --project-id YOUR_PROJECT_REF > src/lib/types/database.generated.ts",
     "verify:fixes": "node scripts/verify-error-fixes.mjs"
   },

@@ -5,6 +5,8 @@ declare
   test_vendor uuid;
   category_ids uuid[];
   created_product uuid;
+  sample_image_path text;
+  sample_alt_text text;
   i integer;
 begin
   select id into test_vendor
@@ -24,6 +26,14 @@ begin
   if coalesce(array_length(category_ids, 1), 0) = 0 then
     raise exception 'No visible categories exist in staging.';
   end if;
+
+  select image.storage_path, image.alt_text
+  into sample_image_path, sample_alt_text
+  from public.product_images image
+  join public.products product on product.id = image.product_id
+  where product.slug not like 'perf-test-%'
+  order by (image.image_type = 'cover') desc, image.sort_order, image.created_at
+  limit 1;
 
   for i in 1..120 loop
     insert into public.products (
@@ -61,6 +71,19 @@ begin
     )
     on conflict (slug) do update set updated_at = timezone('utc', now())
     returning id into created_product;
+
+    if sample_image_path is not null then
+      insert into public.product_images (
+        product_id, storage_path, alt_text, image_type, sort_order
+      ) values (
+        created_product,
+        sample_image_path,
+        coalesce(nullif(sample_alt_text, ''), 'Synthetic catalogue performance preview'),
+        'cover',
+        0
+      )
+      on conflict (product_id, storage_path) do nothing;
+    end if;
 
     insert into public.product_versions (
       product_id, version, package_path, release_notes, file_size_bytes,

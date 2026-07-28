@@ -27,6 +27,9 @@ The source can be installed without credentials, but the live catalogue, authent
 | `npm run preview` | Preview the production build |
 | `npm run check` | Type + Svelte checks |
 | `npm run verify` | Sanity-check routes and static assets |
+| `npm run verify:catalogue` | Verify catalogue pagination, caching, seller scaling and protected storage assumptions |
+| `npm run test:catalogue:self` | Test the staging-audit tool locally without external services |
+| `npm run test:catalogue:staging -- <URL>` | Audit a Netlify staging deployment and write a performance report |
 | `npm run db:types` | Regenerate DB types from Supabase |
 
 ## Project layout
