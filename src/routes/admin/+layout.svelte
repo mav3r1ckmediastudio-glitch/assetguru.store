@@ -1,5 +1,39 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { page } from '$app/state';
   import AdminNav from '$lib/components/AdminNav.svelte';
+  import { loadAdminData, loadModerationQueue, loadVendorApplications } from '$lib/stores/admin';
+
+  let mounted=false;
+  let lastPath='';
+
+  async function loadForRoute(path:string) {
+    try {
+      if(path.startsWith('/admin/moderation')) {
+        await loadModerationQueue();
+        return;
+      }
+      if(path.startsWith('/admin/vendors')) {
+        await loadVendorApplications();
+        return;
+      }
+      await loadAdminData();
+    } catch {
+      // The shared toast/error stores already expose the failure to the admin UI.
+    }
+  }
+
+  $: path=page.url.pathname;
+  $: if(mounted && path!==lastPath) {
+    lastPath=path;
+    void loadForRoute(path);
+  }
+
+  onMount(()=>{
+    mounted=true;
+    lastPath=path;
+    void loadForRoute(path);
+  });
 </script>
 <div class="admin-shell content-wrap">
   <AdminNav/>

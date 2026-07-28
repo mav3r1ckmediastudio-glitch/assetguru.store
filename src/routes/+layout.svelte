@@ -10,7 +10,7 @@
   import { loadCatalogue } from '$lib/stores/catalogue';
   import { loadBuyerData, resetBuyerData } from '$lib/stores/buyer';
   import { loadCreatorData, resetCreatorData } from '$lib/stores/creator';
-  import { loadAdminData, resetAdminData } from '$lib/stores/admin';
+  import { resetAdminData } from '$lib/stores/admin';
   import { hydrateSession } from '$lib/stores/session';
   import { showToast } from '$lib/stores/marketplace';
   import { getSupabaseBrowserClient } from '$lib/supabase/client';
@@ -46,7 +46,6 @@
       if (data.profile?.role === 'vendor') await loadCreatorData(true);
       if (disposed || generation !== syncGeneration) return;
 
-      if (data.profile?.role === 'admin') await loadAdminData(true);
     } catch (error) {
       if (!disposed && generation === syncGeneration) {
         showToast(error instanceof Error ? error.message : 'Account data could not be loaded', 'warning');

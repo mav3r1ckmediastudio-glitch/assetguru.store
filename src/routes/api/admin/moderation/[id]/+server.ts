@@ -1,7 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { apiError, getSupabaseAdmin, requireRole, writeAudit } from '$lib/server/supabase';
-import { isR2ObjectKey, verifyR2Object } from '$lib/server/r2-storage';
 
 const schema = z.object({
   status: z.enum(['Queued','In review','Changes requested','Approved','Rejected']),
@@ -17,12 +16,6 @@ const dateTime = (value:string|null|undefined) => value ? new Intl.DateTimeForma
 const bytes = (value:number|null|undefined) => { const amount=Number(value??0); if(amount>=1024**3)return `${(amount/1024**3).toFixed(2)} GB`; if(amount>=1024**2)return `${(amount/1024**2).toFixed(amount>=100*1024**2?0:1)} MB`; if(amount>=1024)return `${(amount/1024).toFixed(1)} KB`; return `${amount} B`; };
 const fileName = (path:string|null|undefined) => { const name=String(path??'').split('/').pop()??''; try{return decodeURIComponent(name);}catch{return name;} };
 
-async function legacyObjectAvailable(admin:ReturnType<typeof getSupabaseAdmin>, path:string|null|undefined) {
-  if (!path) return false;
-  const { data, error } = await admin.storage.from('asset-packages').createSignedUrl(path, 60);
-  return !error && Boolean(data?.signedUrl);
-}
-
 export async function GET({ locals, params }: import('./$types').RequestEvent) {
   try {
     await requireRole(locals, ['admin']);
@@ -37,18 +30,8 @@ export async function GET({ locals, params }: import('./$types').RequestEvent) {
     const images=[...(product.images??[])].sort((a:any,b:any)=>Number(a.sort_order)-Number(b.sort_order));
     const versions=[...(product.versions??[])].sort((a:any,b:any)=>String(b.created_at).localeCompare(String(a.created_at)));
     const version=versions.find((entry:any)=>entry.status==='pending')??versions.find((entry:any)=>entry.is_current)??versions[0]??null;
-    let packageVerified=false;
-    let documentationVerified:null|boolean=null;
-    if(version?.package_path){
-      packageVerified=isR2ObjectKey(version.package_path)
-        ? (await verifyR2Object(version.package_path,Number(version.file_size_bytes))).ok
-        : await legacyObjectAvailable(admin,version.package_path);
-    }
-    if(version?.documentation_path){
-      documentationVerified=isR2ObjectKey(version.documentation_path)
-        ? (await verifyR2Object(version.documentation_path)).ok
-        : await legacyObjectAvailable(admin,version.documentation_path);
-    }
+    const packageVerified:null=null;
+    const documentationVerified:null=null;
     const auditRows=(history??[]) as any[];
     const declarationRecorded=auditRows.some((entry:any)=>entry.metadata?.declarationAccepted===true || entry.metadata?.declaration_accepted===true);
     const risk=product.price_pence===0?'Low':'Medium';

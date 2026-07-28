@@ -11,7 +11,7 @@ export type ModerationDetail = {
   sourceFiles:boolean; dependencies:string; performance:string; features:string[]; contents:string[]; tags:string[]; formats:string[];
   showcaseVideoUrl?:string;
   images:Array<{ id:string; url:string; altText:string; imageType:'cover'|'gallery'; sortOrder:number }>;
-  version:{ id:string; version:string; status:string; size:string; sizeBytes:number; releaseNotes:string; packageName:string; documentationName?:string; created:string; packageVerified:boolean; documentationVerified:boolean|null } | null;
+  version:{ id:string; version:string; status:string; size:string; sizeBytes:number; releaseNotes:string; packageName:string; documentationName?:string; created:string; packageVerified:boolean|null; documentationVerified:boolean|null } | null;
   declaration:{ recorded:boolean; text:string };
   history:Array<{ id:string; action:string; actorRole:string; created:string; notes?:string }>;
 };
