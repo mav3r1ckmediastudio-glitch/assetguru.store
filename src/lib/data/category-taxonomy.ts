@@ -124,3 +124,21 @@ export const CATEGORY_TAXONOMY: CategoryTaxonomyItem[] = [
 export function taxonomyCategory(name: string) {
   return CATEGORY_TAXONOMY.find((item) => item.name === name);
 }
+
+export const CATEGORY_LEGACY_ALIASES: Record<string, string[]> = {
+  'Characters & Creatures': ['Characters'],
+  'Environments': [],
+  'Props & Objects': ['Props'],
+  'Weapons & Equipment': ['Weapons'],
+  'Vehicles': [],
+  'Animations': [],
+  'Textures & Materials': ['Materials & textures'],
+  'Visual Effects': ['Shaders & VFX'],
+  'Audio': [],
+  'Scripts & Gameplay Systems': ['Scripts & systems'],
+  'UI & HUD': ['UI & 2D'],
+  'Templates & Projects': []
+};
+
+export const CATEGORY_COUNT = CATEGORY_TAXONOMY.length;
+export const SUBCATEGORY_COUNT = CATEGORY_TAXONOMY.reduce((total, item) => total + item.subcategories.length, 0);
