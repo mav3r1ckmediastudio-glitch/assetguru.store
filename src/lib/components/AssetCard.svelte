@@ -7,11 +7,16 @@
   export let view: 'grid' | 'list' = 'grid';
 
   $: favourite = $favourites.includes(asset.slug);
+
+  function useFallback(event: Event) {
+    const image = event.currentTarget as HTMLImageElement;
+    if (asset.imageFallback && image.src !== asset.imageFallback) image.src = asset.imageFallback;
+  }
 </script>
 
 <article class:list={view === 'list'} class="asset-card" data-accent={asset.accent}>
   <a class="image-wrap" href={`/marketplace/${asset.slug}`} aria-label={`View ${asset.title}`}>
-    <img src={asset.image} alt="" />
+    <img src={asset.image} alt="" loading="lazy" decoding="async" width="640" height="360" onerror={useFallback} />
     {#if asset.badge}<span class="badge">{asset.badge}</span>{/if}
     <span class="compat">{asset.compatibility}</span>
   </a>
@@ -32,7 +37,7 @@
       <p>{asset.category} · {asset.subcategory}</p>
       {#if view === 'list'}<span class="summary">{asset.summary}</span>{/if}
       <a class="creator" href={`/creators/${asset.creatorSlug}`}>
-        <img src={asset.creatorAvatar} alt=""/><span>{asset.creator}</span><b title="Verified creator">✓</b>
+        <img src={asset.creatorAvatar} alt="" loading="lazy" decoding="async" width="22" height="22"/><span>{asset.creator}</span><b title="Verified creator">✓</b>
       </a>
     </div>
     <div class="meta">

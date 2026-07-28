@@ -5,6 +5,7 @@
   import AssetCard from '$lib/components/AssetCard.svelte';
   import SectionHeading from '$lib/components/SectionHeading.svelte';
   import { assets, categories, creators, featuredAssets, topCreators } from '$lib/data/marketplace';
+  import { catalogueTotal } from '$lib/stores/catalogue';
 
   $: saleAsset = $featuredAssets.find((asset) => asset.oldPrice && asset.oldPrice > asset.price);
   $: collectionAsset = $featuredAssets[0];
@@ -30,7 +31,7 @@
       <div class="hero-art" aria-hidden="true">
         <img src="/images/hero-city.webp" alt=""/>
         <span class="scan"></span>
-        <div class="hero-chip chip-one"><i></i><span><b>{$assets.length.toLocaleString('en-GB')}</b> curated {$assets.length === 1 ? 'asset' : 'assets'}</span></div>
+        <div class="hero-chip chip-one"><i></i><span><b>{$catalogueTotal.toLocaleString('en-GB')}</b> curated {$catalogueTotal === 1 ? 'asset' : 'assets'}</span></div>
         <div class="hero-chip chip-two"><Icon name="max" size={19}/><span>Verified for <b>MAX</b></span></div>
       </div>
     </div>
@@ -68,7 +69,7 @@
 
 <section class="trust-strip">
   <div class="content-wrap trust-grid">
-    <div><Icon name="spark"/><span><strong>{$assets.length.toLocaleString('en-GB')}</strong><small>Premium assets</small></span></div>
+    <div><Icon name="spark"/><span><strong>{$catalogueTotal.toLocaleString('en-GB')}</strong><small>Premium assets</small></span></div>
     <div><Icon name="shield"/><span><strong>{$creators.length.toLocaleString('en-GB')}</strong><small>Approved creators</small></span></div>
     <div><Icon name="lock"/><span><strong>Secure</strong><small>Protected checkout</small></span></div>
     <div><Icon name="max"/><span><strong>Made for</strong><small>GameGuru MAX</small></span></div>
@@ -105,7 +106,7 @@
         <span class="eyebrow">Featured release</span>
         <h2>{collectionAsset.title}</h2>
         <p>{collectionAsset.summary}</p>
-        <div class="collection-stats"><span><b>{$assets.length}</b> live assets</span><span><b>{$creators.length}</b> approved creators</span><span><b>{collectionAsset.maxVersion}</b> compatibility</span></div>
+        <div class="collection-stats"><span><b>{$catalogueTotal}</b> live assets</span><span><b>{$creators.length}</b> approved creators</span><span><b>{collectionAsset.maxVersion}</b> compatibility</span></div>
         <a class="button button-promo" href={`/marketplace/${collectionAsset.slug}`}>View featured asset <Icon name="arrow" size={18}/></a>
       </div>
     </div>

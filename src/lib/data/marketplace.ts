@@ -21,6 +21,7 @@ export type Asset = {
   creatorSlug: string;
   creatorAvatar: string;
   image: string;
+  imageFallback?: string;
   gallery: string[];
   showcaseVideoUrl?: string;
   price: number;
@@ -71,6 +72,7 @@ export type Creator = {
   reviews: number;
   sales: number;
   followers: number;
+  productCount?: number;
   joined: string;
   responseTime: string;
   location: string;

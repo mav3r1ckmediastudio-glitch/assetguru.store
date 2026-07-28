@@ -2,17 +2,18 @@
   import '../app.css';
   import { invalidate } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import Header from '$lib/components/Header.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import GuruAssist from '$lib/components/GuruAssist.svelte';
   import Footer from '$lib/components/Footer.svelte';
   import ToastStack from '$lib/components/ToastStack.svelte';
-  import { loadCatalogue } from '$lib/stores/catalogue';
+  import { ensureCatalogueAssets, loadCatalogue } from '$lib/stores/catalogue';
   import { loadBuyerData, resetBuyerData } from '$lib/stores/buyer';
   import { loadCreatorData, resetCreatorData } from '$lib/stores/creator';
   import { resetAdminData } from '$lib/stores/admin';
   import { hydrateSession } from '$lib/stores/session';
-  import { showToast } from '$lib/stores/marketplace';
+  import { cart, showToast } from '$lib/stores/marketplace';
   import { getSupabaseBrowserClient } from '$lib/supabase/client';
 
   export let data;
@@ -57,9 +58,14 @@
     mounted = true;
     lastAuthKey = authKey;
 
-    void loadCatalogue().catch((error) => {
-      if (!disposed) showToast(error instanceof Error ? error.message : 'Marketplace data could not be loaded', 'warning');
-    });
+    void (async()=>{
+      try{
+        await loadCatalogue();
+        await ensureCatalogueAssets(get(cart).map(line=>line.slug));
+      }catch(error){
+        if (!disposed) showToast(error instanceof Error ? error.message : 'Marketplace data could not be loaded', 'warning');
+      }
+    })();
     void synchroniseAccountData();
 
     let unsubscribe = () => {};

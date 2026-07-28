@@ -1,23 +1,25 @@
 <script lang="ts">
-  import { page } from '$app/state';
+  import type { PageData } from './$types';
   import { goto } from '$app/navigation';
   import AssetCard from '$lib/components/AssetCard.svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import { assetPrice, assets, getCreator, type LicenceKey } from '$lib/data/marketplace';
+  import { assetPrice, type LicenceKey } from '$lib/data/marketplace';
   import { addToCart, favourites, toggleFavourite } from '$lib/stores/marketplace';
   import { parseShowcaseVideoUrl } from '$lib/showcase-video';
 
+  export let data: PageData;
+
+  let asset = data.asset;
+  let creator = data.creator;
+  let related = data.related ?? [];
   let selectedMedia = '';
   let videoSelected = false;
   let showcaseVideo: ReturnType<typeof parseShowcaseVideoUrl> = null;
   let tab = 'Overview';
   let licence: LicenceKey = 'standard';
 
-  $: asset = $assets.find((item) => item.slug === page.params.slug);
-  $: creator = asset ? getCreator(asset.creatorSlug) : undefined;
   $: favourite = asset ? $favourites.includes(asset.slug) : false;
   $: displayPrice = asset ? assetPrice(asset, licence) : 0;
-  $: related = asset ? $assets.filter((item) => item.slug !== asset.slug && (item.category === asset.category || item.creatorSlug === asset.creatorSlug)).slice(0, 4) : [];
   $: showcaseVideo = parseShowcaseVideoUrl(asset?.showcaseVideoUrl);
   $: if (!showcaseVideo) videoSelected = false;
   $: if (asset && !asset.gallery.includes(selectedMedia)) { selectedMedia = asset.image; videoSelected = false; }
@@ -42,10 +44,10 @@
 
     <div class="product-grid">
       <div class="media-panel">
-        <div class="main-media glass">{#if videoSelected&&showcaseVideo}<iframe src={showcaseVideo.embedUrl} title={`${asset.title} showcase video`} loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>{:else}<img src={selectedMedia} alt={asset.title}/><div class="media-overlay"><span>{asset.badge ?? asset.subcategory}</span><b>{asset.compatibility}</b></div>{/if}</div>
+        <div class="main-media glass">{#if videoSelected&&showcaseVideo}<iframe src={showcaseVideo.embedUrl} title={`${asset.title} showcase video`} loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>{:else}<img src={selectedMedia} alt={asset.title} decoding="async" fetchpriority="high"/><div class="media-overlay"><span>{asset.badge ?? asset.subcategory}</span><b>{asset.compatibility}</b></div>{/if}</div>
         <div class="thumbs">
           {#each asset.gallery as media, index}
-            <button class:active={!videoSelected&&selectedMedia === media} type="button" onclick={() => { selectedMedia = media; videoSelected = false; }}><img src={media} alt={`${asset.title} preview ${index + 1}`}/></button>
+            <button class:active={!videoSelected&&selectedMedia === media} type="button" onclick={() => { selectedMedia = media; videoSelected = false; }}><img src={media} alt={`${asset.title} preview ${index + 1}`} loading="lazy" decoding="async"/></button>
           {/each}
           {#if showcaseVideo}<button class:active={videoSelected} class="video-thumb" type="button" onclick={() => videoSelected = true}><Icon name="eye" size={24}/><span>{showcaseVideo.provider==='youtube'?'YouTube':'Vimeo'}</span></button>{/if}
         </div>

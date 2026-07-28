@@ -26,7 +26,7 @@
           <div class="profile"><img src={creator.avatar} alt=""/><div><h2>{creator.name}</h2><span><Icon name="check" size={12}/> Verified creator</span></div></div>
           <p>{creator.tagline}</p>
           <div class="specialties">{#each creator.specialties as item}<em>{item}</em>{/each}</div>
-          <div class="stats"><span><b>{creator.rating}</b><small>rating</small></span><span><b>{$assets.filter((asset) => asset.creatorSlug === creator.slug).length}</b><small>products</small></span><span><b>{creator.sales.toLocaleString('en-GB')}</b><small>sales</small></span></div>
+          <div class="stats"><span><b>{creator.rating}</b><small>rating</small></span><span><b>{creator.productCount ?? $assets.filter((asset) => asset.creatorSlug === creator.slug).length}</b><small>products</small></span><span><b>{creator.sales.toLocaleString('en-GB')}</b><small>sales</small></span></div>
           <strong class="visit">Visit storefront <Icon name="arrow" size={16}/></strong>
         </a>
       {/each}

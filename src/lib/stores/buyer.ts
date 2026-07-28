@@ -3,6 +3,7 @@ import { apiRequest } from '$lib/api';
 import { getAsset, type Asset } from '$lib/data/marketplace';
 import { defaultBuyerProfile, type BuyerProfile, type BuyerOrder, type BuyerReview, type DownloadEvent, type SupportTicket } from '$lib/data/buyer';
 import { hydrateFavourites, showToast } from '$lib/stores/marketplace';
+import { ensureCatalogueAssets } from '$lib/stores/catalogue';
 
 export const buyerProfile = writable<BuyerProfile>(defaultBuyerProfile);
 export const buyerOrders = writable<BuyerOrder[]>([]);
@@ -101,7 +102,14 @@ export async function loadBuyerData(force=false) {
     const data=await apiRequest<any>('/api/buyer');
     if (generation !== buyerLoadGeneration) return;
     buyerProfile.set(data.profile ?? defaultBuyerProfile);
-    buyerOrders.set(data.orders ?? []);
+    const orders=data.orders ?? [];
+    buyerOrders.set(orders);
+    try {
+      await ensureCatalogueAssets(orders.flatMap((order:BuyerOrder)=>order.items.map(item=>item.slug)));
+    } catch (error) {
+      console.warn('Buyer product cards could not be hydrated', error);
+    }
+    if (generation !== buyerLoadGeneration) return;
     buyerReviews.set(data.reviews ?? []);
     supportTickets.set(data.tickets ?? []);
     downloadHistory.set(data.downloads ?? []);

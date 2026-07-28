@@ -25,63 +25,264 @@ function publicUrl(supabase:SupabaseClient<any>,bucket:string,path?:string|null,
   return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 }
 
-export async function loadPublicCatalogue(supabase:SupabaseClient<any>) {
-  const [
-    { data: productRows, error: productError },
-    { data: categoryRows, error: categoryError },
-    { data: vendorRows, error: vendorError },
-    { data: followRows, error: followError },
-    { data: settingsRow, error: settingsError }
-  ] = await Promise.all([
-    supabase.from('products').select(`*, category:categories(id,name,slug,accent), vendor:vendor_profiles!products_vendor_id_fkey(id,slug,display_name,handle,tagline,bio,response_time,location,specialties,avatar_path,banner_path,created_at,status), images:product_images(id,storage_path,alt_text,image_type,sort_order), versions:product_versions(id,version,file_size_bytes,is_current,status,approved_at,created_at), reviews:reviews(rating,title,body,created_at,status,buyer:profiles(display_name))`).eq('status','published').order('published_at',{ascending:false}),
-    supabase.from('categories').select('*').eq('visible',true).order('sort_order'),
-    supabase.from('vendor_profiles').select('*').eq('status','approved').order('display_name'),
+function publicImageUrl(
+  supabase:SupabaseClient<any>,
+  bucket:string,
+  path?:string|null,
+  fallback='/images/marketplace-grid.webp',
+  width=640,
+  height=360
+){
+  if(!path)return fallback;
+  return supabase.storage.from(bucket).getPublicUrl(path,{
+    transform:{width,height,resize:'cover',quality:82}
+  }).data.publicUrl;
+}
+
+export type CatalogueQueryOptions={
+  page?:number;
+  pageSize?:number;
+  search?:string;
+  categories?:string[];
+  price?:'free'|'under-15'|'15-25'|'25-plus';
+  minimumRating?:number;
+  maxVersion?:string;
+  sourceFilesOnly?:boolean;
+  sort?:'trending'|'newest'|'top-rated'|'price-low'|'price-high';
+  slugs?:string[];
+  includeMeta?:boolean;
+};
+
+const catalogueCardSelect=`
+  id,slug,title,subcategory,summary,price_pence,extended_price_pence,badge,
+  compatibility,max_version,source_files,dependencies,download_size_bytes,
+  performance,tags,sales_count,rating_average,review_count,updated_at,published_at,
+  category:categories(id,name,slug,accent),
+  vendor:vendor_profiles!products_vendor_id_fkey(id,slug,display_name,avatar_path,status)
+`;
+
+async function mapCatalogueCards(supabase:SupabaseClient<any>,rows:any[]):Promise<Asset[]> {
+  if(!rows.length)return [];
+  const ids=rows.map(row=>row.id);
+  const [{data:imageRows,error:imageError},{data:versionRows,error:versionError}]=await Promise.all([
+    supabase.from('product_images')
+      .select('product_id,storage_path,alt_text,image_type,sort_order')
+      .in('product_id',ids)
+      .eq('image_type','cover')
+      .order('sort_order',{ascending:true}),
+    supabase.from('product_versions')
+      .select('id,product_id,version,file_size_bytes,is_current,status,approved_at,created_at')
+      .in('product_id',ids)
+      .eq('is_current',true)
+      .eq('status','approved')
+  ]);
+  if(imageError)throw imageError;
+  if(versionError)throw versionError;
+
+  const covers=new Map<string,any>();
+  for(const image of (imageRows??[]) as any[])if(!covers.has(image.product_id))covers.set(image.product_id,image);
+  const missingCoverIds=ids.filter(id=>!covers.has(id));
+  if(missingCoverIds.length){
+    const fallbackResult=await supabase.from('product_images')
+      .select('product_id,storage_path,alt_text,image_type,sort_order')
+      .in('product_id',missingCoverIds)
+      .order('sort_order',{ascending:true});
+    if(fallbackResult.error)throw fallbackResult.error;
+    for(const image of (fallbackResult.data??[]) as any[])if(!covers.has(image.product_id))covers.set(image.product_id,image);
+  }
+  const versions=new Map<string,any>();
+  for(const version of (versionRows??[]) as any[])versions.set(version.product_id,version);
+
+  return rows.map(row=>{
+    const cover=covers.get(row.id);
+    const version=versions.get(row.id);
+    return {
+      id:row.id,
+      currentVersionId:version?.id,
+      slug:row.slug,
+      title:row.title,
+      category:row.category?.name??'Uncategorised',
+      subcategory:row.subcategory??'',
+      creator:row.vendor?.display_name??'Creator',
+      creatorSlug:row.vendor?.slug??'',
+      creatorAvatar:publicUrl(supabase,'avatars',row.vendor?.avatar_path,'/favicon.svg'),
+      image:publicImageUrl(supabase,'product-images',cover?.storage_path,'/images/marketplace-grid.webp',640,360),
+      imageFallback:publicUrl(supabase,'product-images',cover?.storage_path,'/images/marketplace-grid.webp'),
+      gallery:[],
+      price:pounds(row.price_pence),
+      extendedPrice:row.extended_price_pence==null?undefined:pounds(row.extended_price_pence),
+      rating:Number(row.rating_average??0),
+      reviews:Number(row.review_count??0),
+      sales:Number(row.sales_count??0),
+      badge:row.badge??(row.price_pence===0?'Free':undefined),
+      accent:(row.category?.accent??'cyan') as Asset['accent'],
+      compatibility:row.compatibility??'GameGuru MAX',
+      maxVersion:(row.max_version??'Any MAX build') as Asset['maxVersion'],
+      sourceFiles:Boolean(row.source_files),
+      dependencies:row.dependencies??'None',
+      downloadSize:bytes(version?.file_size_bytes??row.download_size_bytes),
+      performance:(row.performance??'Mid-range') as Asset['performance'],
+      updated:dateLong(row.updated_at),
+      version:version?.version??'1.0.0',
+      summary:row.summary??'',
+      description:'',
+      features:[],
+      contents:[],
+      tags:row.tags??[],
+      formats:[],
+      licence:'',
+      recentReviews:[]
+    };
+  });
+}
+
+export async function loadPublicCatalogue(supabase:SupabaseClient<any>,options:CatalogueQueryOptions={}) {
+  const page=Math.max(1,Math.floor(options.page??1));
+  const requestedSize=options.slugs?.length?Math.max(options.slugs.length,1):(options.pageSize??24);
+  const pageSize=Math.min(100,Math.max(1,Math.floor(requestedSize)));
+  const includeMeta=options.includeMeta!==false;
+  const categoriesFilter=(options.categories??[]).filter(Boolean).slice(0,12);
+
+  let categoryRows:any[]=[];
+  if(includeMeta||categoriesFilter.length){
+    const result=await supabase.from('categories').select('id,name,slug,description,icon,accent,sort_order,visible').eq('visible',true).order('sort_order');
+    if(result.error)throw result.error;
+    categoryRows=(result.data??[]) as any[];
+  }
+
+  let productQuery=supabase.from('products')
+    .select(catalogueCardSelect,{count:'exact'})
+    .eq('status','published');
+
+  if(options.slugs?.length){
+    productQuery=productQuery.in('slug',options.slugs.slice(0,100));
+  }else{
+    const search=(options.search??'').trim().replace(/[%_,().]/g,' ').replace(/\s+/g,' ').slice(0,80);
+    if(search){
+      const pattern=`%${search}%`;
+      productQuery=productQuery.or(`title.ilike.${pattern},summary.ilike.${pattern},subcategory.ilike.${pattern}`);
+    }
+    if(categoriesFilter.length){
+      const wanted=new Set(categoriesFilter.map(value=>value.toLowerCase()));
+      const ids=categoryRows.filter(row=>wanted.has(String(row.name).toLowerCase())||wanted.has(String(row.slug).toLowerCase())).map(row=>row.id);
+      if(!ids.length)return {assets:[],categories:[],creators:[],settings:null,pagination:{page,pageSize,total:0,totalPages:0,hasMore:false},stats:{totalAssets:0,averageRating:0}};
+      productQuery=productQuery.in('category_id',ids);
+    }
+    if(options.price==='free')productQuery=productQuery.eq('price_pence',0);
+    if(options.price==='under-15')productQuery=productQuery.gt('price_pence',0).lt('price_pence',1500);
+    if(options.price==='15-25')productQuery=productQuery.gte('price_pence',1500).lte('price_pence',2500);
+    if(options.price==='25-plus')productQuery=productQuery.gt('price_pence',2500);
+    if(options.minimumRating)productQuery=productQuery.gte('rating_average',options.minimumRating);
+    if(options.maxVersion&&options.maxVersion!=='Any MAX version')productQuery=productQuery.eq('max_version',options.maxVersion);
+    if(options.sourceFilesOnly)productQuery=productQuery.eq('source_files',true);
+  }
+
+  switch(options.sort){
+    case 'newest':productQuery=productQuery.order('published_at',{ascending:false});break;
+    case 'top-rated':productQuery=productQuery.order('rating_average',{ascending:false}).order('review_count',{ascending:false});break;
+    case 'price-low':productQuery=productQuery.order('price_pence',{ascending:true}).order('published_at',{ascending:false});break;
+    case 'price-high':productQuery=productQuery.order('price_pence',{ascending:false}).order('published_at',{ascending:false});break;
+    default:productQuery=productQuery.order('sales_count',{ascending:false}).order('published_at',{ascending:false});
+  }
+
+  if(!options.slugs?.length){
+    const from=(page-1)*pageSize;
+    productQuery=productQuery.range(from,from+pageSize-1);
+  }
+
+  const {data:productRows,error:productError,count}=await productQuery;
+  if(productError)throw productError;
+  const rows=(productRows??[]) as any[];
+  const assets=await mapCatalogueCards(supabase,rows);
+  const total=count??assets.length;
+  const totalPages=total?Math.ceil(total/pageSize):0;
+
+  if(!includeMeta){
+    return {assets,categories:[],creators:[],settings:null,pagination:{page,pageSize,total,totalPages,hasMore:page<totalPages},stats:{totalAssets:total,averageRating:0}};
+  }
+
+  const [vendorsResult,metricsResult,followsResult,settingsResult]=await Promise.all([
+    supabase.from('vendor_profiles').select('id,slug,display_name,tagline,bio,response_time,location,specialties,avatar_path,banner_path,created_at,status,support_promise,update_commitment,custom_licence_notes').eq('status','approved').order('display_name'),
+    supabase.from('products').select('vendor_id,category_id,sales_count,rating_average,review_count').eq('status','published'),
     supabase.from('creator_follows').select('vendor_id'),
     supabase.from('marketplace_settings').select('*').eq('id',1).single()
   ]);
-  if(productError)throw productError;
-  if(categoryError)throw categoryError;
-  if(vendorError)throw vendorError;
-  if(followError)throw followError;
-  if(settingsError)throw settingsError;
+  if(vendorsResult.error)throw vendorsResult.error;
+  if(metricsResult.error)throw metricsResult.error;
+  if(followsResult.error)throw followsResult.error;
+  if(settingsResult.error)throw settingsResult.error;
 
-  const rows=(productRows??[]) as any[];
-  const assets:Asset[]=rows.map(row=>{
-    const imgs=[...(row.images??[])].sort((a:any,b:any)=>a.sort_order-b.sort_order);
-    const cover=imgs.find((i:any)=>i.image_type==='cover')??imgs[0];
-    const gallery=imgs.map((i:any)=>publicUrl(supabase,'product-images',i.storage_path)).filter(Boolean);
-    const version=(row.versions??[]).find((v:any)=>v.is_current&&v.status==='approved')??(row.versions??[]).find((v:any)=>v.status==='approved');
-    return {
-      id:row.id,currentVersionId:version?.id,slug:row.slug,title:row.title,category:row.category?.name??'Uncategorised',subcategory:row.subcategory??'',creator:row.vendor?.display_name??'Creator',creatorSlug:row.vendor?.slug??'',creatorAvatar:publicUrl(supabase,'avatars',row.vendor?.avatar_path,'/favicon.svg'),image:publicUrl(supabase,'product-images',cover?.storage_path),gallery:gallery.length?gallery:[publicUrl(supabase,'product-images',cover?.storage_path)],showcaseVideoUrl:row.showcase_video_url||undefined,price:pounds(row.price_pence),extendedPrice:row.extended_price_pence==null?undefined:pounds(row.extended_price_pence),rating:Number(row.rating_average??0),reviews:Number(row.review_count??0),sales:Number(row.sales_count??0),badge:row.badge??(row.price_pence===0?'Free':undefined),accent:(row.category?.accent??'cyan') as Asset['accent'],compatibility:row.compatibility,maxVersion:row.max_version,sourceFiles:Boolean(row.source_files),dependencies:row.dependencies,downloadSize:bytes(version?.file_size_bytes??row.download_size_bytes),performance:row.performance,updated:dateLong(row.updated_at),version:version?.version??'1.0.0',summary:row.summary,description:row.description,features:row.features??[],contents:row.contents??[],tags:row.tags??[],formats:row.formats??[],licence:row.licence,recentReviews:[...(row.reviews??[])].filter((review:any)=>review.status==='published').sort((a:any,b:any)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,12).map((review:any)=>({buyer:review.buyer?.display_name??'Verified buyer',rating:Number(review.rating),title:review.title,text:review.body,date:dateShort(review.created_at)}))
-    };
-  });
-
-  const assetCounts=new Map<string,number>();
-  for(const asset of assets)assetCounts.set(asset.category,(assetCounts.get(asset.category)??0)+1);
-  const categories:Category[]=((categoryRows??[]) as any[]).map(row=>({id:row.id,slug:row.slug,name:row.name,count:`${assetCounts.get(row.name)??0} ${(assetCounts.get(row.name)??0)===1?'asset':'assets'}`,icon:row.icon,description:row.description,accent:row.accent}));
-
-  const byVendor=new Map<string,Asset[]>();
-  const productRowsByVendor=new Map<string,any[]>();
-  for(const asset of assets){const list=byVendor.get(asset.creatorSlug)??[];list.push(asset);byVendor.set(asset.creatorSlug,list);}
-  for(const row of rows){const slug=row.vendor?.slug??'';const list=productRowsByVendor.get(slug)??[];list.push(row);productRowsByVendor.set(slug,list);}
+  const metrics=(metricsResult.data??[]) as any[];
+  const categoryCounts=new Map<string,number>();
+  const vendorMetrics=new Map<string,{products:number;sales:number;weightedRating:number;reviews:number}>();
+  for(const row of metrics){
+    if(row.category_id)categoryCounts.set(row.category_id,(categoryCounts.get(row.category_id)??0)+1);
+    const current=vendorMetrics.get(row.vendor_id)??{products:0,sales:0,weightedRating:0,reviews:0};
+    const reviews=Number(row.review_count??0);
+    current.products+=1;
+    current.sales+=Number(row.sales_count??0);
+    current.weightedRating+=Number(row.rating_average??0)*reviews;
+    current.reviews+=reviews;
+    vendorMetrics.set(row.vendor_id,current);
+  }
   const followCounts=new Map<string,number>();
-  for(const row of (followRows??[]) as any[])followCounts.set(row.vendor_id,(followCounts.get(row.vendor_id)??0)+1);
+  for(const row of (followsResult.data??[]) as any[])followCounts.set(row.vendor_id,(followCounts.get(row.vendor_id)??0)+1);
 
-  const creators:Creator[]=((vendorRows??[]) as any[]).map(row=>{
-    const products=byVendor.get(row.slug)??[];
-    const reviewCount=products.reduce((sum,product)=>sum+product.reviews,0);
-    const recentReviews=(productRowsByVendor.get(row.slug)??[])
-      .flatMap(product=>(product.reviews??[]).filter((review:any)=>review.status==='published').map((review:any)=>({rating:Number(review.rating),title:review.title,text:review.body,date:dateShort(review.created_at),createdAt:review.created_at})))
-      .sort((a:any,b:any)=>String(b.createdAt).localeCompare(String(a.createdAt)))
-      .slice(0,6)
-      .map(({createdAt,...review}:any)=>review);
+  const categories:Category[]=categoryRows.map(row=>{
+    const amount=categoryCounts.get(row.id)??0;
+    return {id:row.id,slug:row.slug,name:row.name,count:`${amount} ${amount===1?'asset':'assets'}`,icon:row.icon,description:row.description,accent:row.accent};
+  });
+
+  const creators:Creator[]=((vendorsResult.data??[]) as any[]).map(row=>{
+    const metric=vendorMetrics.get(row.id)??{products:0,sales:0,weightedRating:0,reviews:0};
     return {
-      id:row.id,slug:row.slug,name:row.display_name,avatar:publicUrl(supabase,'avatars',row.avatar_path,'/favicon.svg'),banner:publicUrl(supabase,'storefront-banners',row.banner_path,'/images/hero-city.webp'),tagline:row.tagline,bio:row.bio,rating:reviewCount?Number((products.reduce((sum,product)=>sum+product.rating*product.reviews,0)/reviewCount).toFixed(1)):0,reviews:reviewCount,sales:products.reduce((sum,product)=>sum+product.sales,0),followers:followCounts.get(row.id)??0,joined:dateLong(row.created_at),responseTime:row.response_time,location:row.location,specialties:row.specialties??[],verified:row.status==='approved',recentReviews,supportPromise:row.support_promise??'',updateCommitment:row.update_commitment??'',licenceNotes:row.custom_licence_notes??''
+      id:row.id,slug:row.slug,name:row.display_name,
+      avatar:publicUrl(supabase,'avatars',row.avatar_path,'/favicon.svg'),
+      banner:publicUrl(supabase,'storefront-banners',row.banner_path,'/images/hero-city.webp'),
+      tagline:row.tagline??'',bio:row.bio??'',
+      rating:metric.reviews?Number((metric.weightedRating/metric.reviews).toFixed(1)):0,
+      reviews:metric.reviews,sales:metric.sales,followers:followCounts.get(row.id)??0,
+      productCount:metric.products,
+      joined:dateLong(row.created_at),responseTime:row.response_time??'Within 2 business days',location:row.location??'',specialties:row.specialties??[],verified:true,recentReviews:[],supportPromise:row.support_promise??'',updateCommitment:row.update_commitment??'',licenceNotes:row.custom_licence_notes??''
     };
   });
 
-  const settings=settingsRow as any;
-  return {assets,categories,creators,settings:{marketplaceName:settings?.marketplace_name??'AssetGuru',supportEmail:settings?.support_email??'',defaultCommission:Number(settings?.default_commission_percent??15),minimumPrice:pounds(settings?.minimum_price_pence??299),payoutDelay:Number(settings?.payout_delay_days??14),autoApproveUpdates:Boolean(settings?.auto_approve_updates),requireHumanReview:settings?.require_human_review!==false,allowFreeAssets:settings?.allow_free_assets!==false,allowAiAssisted:settings?.allow_ai_assisted!==false,maintenanceMode:Boolean(settings?.maintenance_mode),matureContent:settings?.mature_content??'Tagged and moderated',buyerReviewDelay:Number(settings?.buyer_review_delay_days??3),refundWindow:Number(settings?.refund_window_days??14),featuredLabel:settings?.featured_label??'Guru Pick'}};
+  const rated=metrics.filter(row=>Number(row.rating_average??0)>0);
+  const averageRating=rated.length?Number((rated.reduce((sum,row)=>sum+Number(row.rating_average??0),0)/rated.length).toFixed(1)):0;
+  const settings=settingsResult.data as any;
+  return {
+    assets,categories,creators,
+    settings:{marketplaceName:settings?.marketplace_name??'AssetGuru',supportEmail:settings?.support_email??'',defaultCommission:Number(settings?.default_commission_percent??15),minimumPrice:pounds(settings?.minimum_price_pence??299),payoutDelay:Number(settings?.payout_delay_days??14),autoApproveUpdates:Boolean(settings?.auto_approve_updates),requireHumanReview:settings?.require_human_review!==false,allowFreeAssets:settings?.allow_free_assets!==false,allowAiAssisted:settings?.allow_ai_assisted!==false,maintenanceMode:Boolean(settings?.maintenance_mode),matureContent:settings?.mature_content??'Tagged and moderated',buyerReviewDelay:Number(settings?.buyer_review_delay_days??3),refundWindow:Number(settings?.refund_window_days??14),featuredLabel:settings?.featured_label??'Guru Pick'},
+    pagination:{page,pageSize,total,totalPages,hasMore:page<totalPages},
+    stats:{totalAssets:metrics.length,averageRating}
+  };
+}
+
+export async function loadPublicProduct(supabase:SupabaseClient<any>,slug:string){
+  const {data:row,error}=await supabase.from('products').select(`*, category:categories(id,name,slug,accent), vendor:vendor_profiles!products_vendor_id_fkey(id,slug,display_name,handle,tagline,bio,response_time,location,specialties,avatar_path,banner_path,created_at,status,support_promise,update_commitment,custom_licence_notes), images:product_images(id,storage_path,alt_text,image_type,sort_order), versions:product_versions(id,version,file_size_bytes,is_current,status,approved_at,created_at), reviews:reviews(rating,title,body,created_at,status,buyer:profiles(display_name))`).eq('slug',slug).eq('status','published').maybeSingle();
+  if(error)throw error;
+  if(!row)return null;
+  const item=row as any;
+  const images=[...(item.images??[])].sort((a:any,b:any)=>Number(a.sort_order)-Number(b.sort_order));
+  const cover=images.find((image:any)=>image.image_type==='cover')??images[0];
+  const gallery=images.map((image:any)=>publicUrl(supabase,'product-images',image.storage_path)).filter(Boolean);
+  const version=(item.versions??[]).find((entry:any)=>entry.is_current&&entry.status==='approved')??(item.versions??[]).find((entry:any)=>entry.status==='approved');
+  const image=publicUrl(supabase,'product-images',cover?.storage_path);
+  const asset:Asset={
+    id:item.id,currentVersionId:version?.id,slug:item.slug,title:item.title,category:item.category?.name??'Uncategorised',subcategory:item.subcategory??'',creator:item.vendor?.display_name??'Creator',creatorSlug:item.vendor?.slug??'',creatorAvatar:publicUrl(supabase,'avatars',item.vendor?.avatar_path,'/favicon.svg'),image,gallery:gallery.length?gallery:[image],showcaseVideoUrl:item.showcase_video_url||undefined,price:pounds(item.price_pence),extendedPrice:item.extended_price_pence==null?undefined:pounds(item.extended_price_pence),rating:Number(item.rating_average??0),reviews:Number(item.review_count??0),sales:Number(item.sales_count??0),badge:item.badge??(item.price_pence===0?'Free':undefined),accent:(item.category?.accent??'cyan') as Asset['accent'],compatibility:item.compatibility??'GameGuru MAX',maxVersion:(item.max_version??'Any MAX build') as Asset['maxVersion'],sourceFiles:Boolean(item.source_files),dependencies:item.dependencies??'None',downloadSize:bytes(version?.file_size_bytes??item.download_size_bytes),performance:(item.performance??'Mid-range') as Asset['performance'],updated:dateLong(item.updated_at),version:version?.version??'1.0.0',summary:item.summary??'',description:item.description??'',features:item.features??[],contents:item.contents??[],tags:item.tags??[],formats:item.formats??[],licence:item.licence??'Standard commercial licence',recentReviews:[...(item.reviews??[])].filter((review:any)=>review.status==='published').sort((a:any,b:any)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,12).map((review:any)=>({buyer:review.buyer?.display_name??'Verified buyer',rating:Number(review.rating),title:review.title,text:review.body,date:dateShort(review.created_at)}))
+  };
+
+  const [metricsResult,followersResult,relatedResult]=await Promise.all([
+    supabase.from('products').select('sales_count,rating_average,review_count').eq('vendor_id',item.vendor.id).eq('status','published'),
+    supabase.from('creator_follows').select('vendor_id',{count:'exact',head:true}).eq('vendor_id',item.vendor.id),
+    loadPublicCatalogue(supabase,{page:1,pageSize:5,categories:[asset.category],includeMeta:false,sort:'trending'})
+  ]);
+  if(metricsResult.error)throw metricsResult.error;
+  if(followersResult.error)throw followersResult.error;
+  const metrics=(metricsResult.data??[]) as any[];
+  const reviewTotal=metrics.reduce((sum,row)=>sum+Number(row.review_count??0),0);
+  const creator:Creator={id:item.vendor.id,slug:item.vendor.slug,name:item.vendor.display_name,avatar:asset.creatorAvatar,banner:publicUrl(supabase,'storefront-banners',item.vendor.banner_path,'/images/hero-city.webp'),tagline:item.vendor.tagline??'',bio:item.vendor.bio??'',rating:reviewTotal?Number((metrics.reduce((sum,row)=>sum+Number(row.rating_average??0)*Number(row.review_count??0),0)/reviewTotal).toFixed(1)):0,reviews:reviewTotal,sales:metrics.reduce((sum,row)=>sum+Number(row.sales_count??0),0),followers:followersResult.count??0,productCount:metrics.length,joined:dateLong(item.vendor.created_at),responseTime:item.vendor.response_time??'Within 2 business days',location:item.vendor.location??'',specialties:item.vendor.specialties??[],verified:item.vendor.status==='approved',recentReviews:[],supportPromise:item.vendor.support_promise??'',updateCommitment:item.vendor.update_commitment??'',licenceNotes:item.vendor.custom_licence_notes??''};
+  return {asset,creator,related:(relatedResult.assets??[]).filter(entry=>entry.slug!==asset.slug).slice(0,4)};
 }
 
 export async function loadBuyer(supabase:SupabaseClient<any>, userId:string) {
