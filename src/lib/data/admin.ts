@@ -2,6 +2,19 @@ export type ModerationStatus = 'Queued' | 'In review' | 'Changes requested' | 'A
 export type VendorStatus = 'Pending' | 'Approved' | 'More information' | 'Suspended';
 export type CaseStatus = 'Open' | 'Investigating' | 'Resolved' | 'Declined';
 export type ModerationItem = { id:string; databaseId?:string; title:string; vendor:string; category:string; submitted:string; version:string; type:string; risk:'Low'|'Medium'|'High'; status:ModerationStatus; files:string; notes?:string; };
+export type ModerationDetail = {
+  id:string; slug:string; title:string; status:ModerationStatus; risk:'Low'|'Medium'|'High'; type:string;
+  submitted:string; updated:string; published?:string; moderationNotes?:string;
+  vendor:{ id:string; name:string; handle:string; status:string; email:string; location:string; responseTime:string; joined:string };
+  category:string; subcategory:string; summary:string; description:string;
+  price:number; extendedPrice?:number; licence:string; compatibility:string; maxVersion:string;
+  sourceFiles:boolean; dependencies:string; performance:string; features:string[]; contents:string[]; tags:string[]; formats:string[];
+  showcaseVideoUrl?:string;
+  images:Array<{ id:string; url:string; altText:string; imageType:'cover'|'gallery'; sortOrder:number }>;
+  version:{ id:string; version:string; status:string; size:string; sizeBytes:number; releaseNotes:string; packageName:string; documentationName?:string; created:string; packageVerified:boolean; documentationVerified:boolean|null } | null;
+  declaration:{ recorded:boolean; text:string };
+  history:Array<{ id:string; action:string; actorRole:string; created:string; notes?:string }>;
+};
 export type VendorApplication = { id:string; databaseId?:string; name:string; owner:string; handle:string; email:string; country:string; submitted:string; appliedAt:string; approvedAt?:string; portfolio:string; products:string; status:VendorStatus; stripe:string; commission:number; risk:'Low'|'Medium'|'High'; reason?:string; };
 export type AdminCase = { id:string; databaseId?:string; type:string; product:string; vendor:string; buyer:string; amount:number; opened:string; priority:'Normal'|'High'|'Urgent'; status:CaseStatus; summary:string; orderId?:string; paymentState?:string; downloadCount:number; };
 export type CatalogueCategory = { id:string; name:string; slug:string; products:number; published:number; pending:number; featured:boolean; visible:boolean; commissionOverride?:number; };
