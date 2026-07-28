@@ -9,23 +9,23 @@ import { loadVendorProduct } from '$lib/server/vendor-loaders';
 const schema = z.object({
   title: z.string().trim().min(1).max(120).optional(),
   summary: z.string().trim().max(300).optional(),
-  description: z.string().trim().max(12000).optional(),
-  price: z.number().min(0).max(9999).optional(),
-  extendedPrice: z.number().min(0).max(24999).optional(),
+  description: z.string().trim().max(20000).optional(),
+  price: z.number().finite().min(0).max(9999).optional(),
+  extendedPrice: z.number().finite().min(0).max(24999).optional(),
   version: z.string().min(1).max(40).optional(),
   status: z.enum(['Published', 'Draft', 'In review', 'Changes required', 'Retired']).optional(),
-  category: z.string().optional(),
-  subcategory: z.string().trim().max(100).optional(),
-  compatibility: z.string().max(120).optional(),
+  category: z.string().trim().max(120).optional(),
+  subcategory: z.string().trim().max(120).optional(),
+  compatibility: z.string().max(240).optional(),
   maxVersion: z.enum(['2024+', '2025+', '2026+', 'Any MAX build']).optional(),
   sourceFiles: z.boolean().optional(),
-  dependencies: z.string().max(300).optional(),
+  dependencies: z.string().max(1000).optional(),
   performance: z.enum(['Lightweight', 'Mid-range', 'High detail']).optional(),
-  features: z.array(z.string().max(180)).max(50).optional(),
-  contents: z.array(z.string().max(180)).max(100).optional(),
-  tags: z.array(z.string().max(50)).max(30).optional(),
-  formats: z.array(z.string().max(30)).max(30).optional(),
-  licence: z.string().max(200).optional(),
+  features: z.array(z.string().max(500)).max(100).optional(),
+  contents: z.array(z.string().max(500)).max(200).optional(),
+  tags: z.array(z.string().max(80)).max(50).optional(),
+  formats: z.array(z.string().max(100)).max(50).optional(),
+  licence: z.string().max(5000).optional(),
   showcaseVideoUrl: z.string().trim().max(500).optional()
 });
 
@@ -68,7 +68,13 @@ export async function GET({locals,params}:import('./$types').RequestEvent){
 export async function PATCH({ locals, request, params }: import('./$types').RequestEvent) {
   try {
     const { user } = await requireRole(locals, ['vendor']);
-    const body = schema.parse(await request.json());
+    const parsed = schema.safeParse(await request.json());
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      const field = issue?.path?.length ? String(issue.path[0]) : 'product';
+      return json({ message: `Invalid ${field}: ${issue?.message ?? 'check the submitted value.'}` }, { status: 400 });
+    }
+    const body = parsed.data;
     const showcaseVideo = body.showcaseVideoUrl === undefined
       ? undefined
       : (body.showcaseVideoUrl ? parseShowcaseVideoUrl(body.showcaseVideoUrl) : null);
@@ -275,7 +281,7 @@ export async function PATCH({ locals, request, params }: import('./$types').Requ
   } catch (error) {
     const e = apiError(error);
     return json(
-      { message: error instanceof z.ZodError ? 'Invalid product update.' : e.message },
+      { message: error instanceof z.ZodError ? error.issues[0]?.message ?? 'Invalid product update.' : e.message },
       { status: error instanceof z.ZodError ? 400 : e.status }
     );
   }
@@ -295,8 +301,16 @@ export async function DELETE({ locals, request, params }: import('./$types').Req
       .eq('slug', params.slug)
       .single();
     if (!product) return json({ message: 'Product not found.' }, { status: 404 });
-    if (product.sales_count > 0 || !['draft', 'changes_requested', 'rejected'].includes(product.status)) {
-      return json({ message: 'Only unsold drafts can be deleted. Retire published products instead.' }, { status: 409 });
+    const { count: orderItemCount, error: orderItemError } = await admin
+      .from('order_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('product_id', product.id);
+    if (orderItemError) throw orderItemError;
+    if (Number(product.sales_count ?? 0) > 0 || Number(orderItemCount ?? 0) > 0) {
+      return json(
+        { message: 'This listing has buyer purchases and cannot be permanently deleted. Retire it from sale so existing buyers keep access.' },
+        { status: 409 }
+      );
     }
     const imagePaths = ((product.images ?? []) as any[]).map((item) => item.storage_path).filter(Boolean);
     const packagePaths = ((product.versions ?? []) as any[]).flatMap((item) => [item.package_path, item.documentation_path]).filter(Boolean) as string[];
