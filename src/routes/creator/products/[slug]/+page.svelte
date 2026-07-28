@@ -48,7 +48,7 @@
   let showcaseVideoError = '';
 
   let categoryOptions: CategoryOption[] = fallbackCategories;
-  let categoriesLoading = true;
+  let categoriesLoading = false;
   let categoriesWarning = '';
   $: selectedCategory = categoryOptions.find((item) => item.name === category);
   $: subcategoryOptions = selectedCategory?.subcategories ?? [];
@@ -215,12 +215,12 @@
   async function loadCategoryOptions() {
     categoriesLoading = true;
     categoriesWarning = '';
+    categoryOptions = fallbackCategories;
     try {
       const data = await apiRequest<{categories:CategoryOption[]}>('/api/vendor/categories', { cache:'no-store' });
-      if (data.categories?.length) categoryOptions = data.categories;
+      if (!data.categories?.length) categoriesWarning = 'The database category list was empty. The complete built-in taxonomy remains active.';
     } catch (error) {
-      categoryOptions = fallbackCategories;
-      categoriesWarning = `${error instanceof Error ? error.message : 'The database category list could not be refreshed.'} The complete built-in taxonomy is still available.`;
+      categoriesWarning = `${error instanceof Error ? error.message : 'The database category list could not be refreshed.'} The complete built-in taxonomy remains active.`;
     } finally { categoriesLoading = false; }
   }
 

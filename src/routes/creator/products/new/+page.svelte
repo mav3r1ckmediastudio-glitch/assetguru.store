@@ -2,7 +2,7 @@
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
   import { get } from 'svelte/store';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import FileGlyph from '$lib/components/FileGlyph.svelte';
   import CreatorImageUploader from '$lib/components/CreatorImageUploader.svelte';
@@ -60,11 +60,13 @@
   let showcaseVideo: ReturnType<typeof parseShowcaseVideoUrl> = null;
   let showcaseVideoError = '';
   let categoryOptions: CategoryOption[] = fallbackCategories;
-  let categoriesLoading = true;
+  let categoriesLoading = false;
   let categoriesWarning = '';
   let localReady = false;
   let localRecovered = false;
   let localSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let draftSaveMessage = '';
+  let workflowMain: HTMLElement;
 
   $: selectedCategory = categoryOptions.find((item) => item.name === category);
   $: subcategoryOptions = selectedCategory?.subcategories ?? [];
@@ -150,16 +152,25 @@
     }
   }
 
+  async function moveToStep(target:number) {
+    step = Math.max(1, Math.min(5, target));
+    scheduleLocalSave();
+    await tick();
+    if (browser && workflowMain) {
+      const top = workflowMain.getBoundingClientRect().top + window.scrollY - 88;
+      window.scrollTo({ top:Math.max(0, top), behavior:'smooth' });
+    }
+  }
+
   function next() {
     if (!canContinue) {
       showToast('Complete the required fields in this section before continuing.', 'warning');
       return;
     }
-    step = Math.min(5, step + 1);
-    scheduleLocalSave();
+    void moveToStep(step + 1);
   }
-  function back() { step = Math.max(1, step - 1); scheduleLocalSave(); }
-  function jumpTo(target:number) { step = Math.max(1, Math.min(5, target)); scheduleLocalSave(); }
+  function back() { void moveToStep(step - 1); }
+  function jumpTo(target:number) { void moveToStep(target); }
 
   function setPackage(file:File | null) {
     if (file && !file.name.toLowerCase().endsWith('.zip')) {
@@ -185,13 +196,12 @@
   async function loadCategoryOptions() {
     categoriesLoading = true;
     categoriesWarning = '';
+    categoryOptions = fallbackCategories;
     try {
       const data = await apiRequest<{categories:CategoryOption[]}>('/api/vendor/categories', { cache:'no-store' });
-      if (data.categories?.length) categoryOptions = data.categories;
-      if (category && !categoryOptions.some((item) => item.name === category)) { category = ''; subcategory = ''; }
+      if (!data.categories?.length) categoriesWarning = 'The database category list was empty. The complete built-in taxonomy remains active.';
     } catch (error) {
-      categoryOptions = fallbackCategories;
-      categoriesWarning = `${error instanceof Error ? error.message : 'The server category list could not be refreshed.'} The complete built-in taxonomy is still available.`;
+      categoriesWarning = `${error instanceof Error ? error.message : 'The server category list could not be refreshed.'} The complete built-in taxonomy remains active.`;
     } finally {
       categoriesLoading = false;
     }
@@ -206,9 +216,20 @@
 
   async function saveDraft() {
     if ($platformSettings.maintenanceMode) { showToast('Vendor uploads are paused during maintenance.', 'warning'); return; }
-    if (!title.trim()) { step = 1; showToast('Enter a product title before saving the draft.', 'warning'); return; }
-    if (showcaseVideoError) { step = 3; showToast(showcaseVideoError, 'warning'); return; }
+    if (!title.trim()) { void moveToStep(1); showToast('Enter a product title before saving the draft.', 'warning'); return; }
+    if (showcaseVideoError) { void moveToStep(3); showToast(showcaseVideoError, 'warning'); return; }
+    if (previewFiles.length > 0 && previewFiles.length < 3) {
+      void moveToStep(3);
+      showToast('Choose at least three preview images, or remove the current image selection before saving.', 'warning');
+      return;
+    }
+
     draftSaving = true;
+    uploadProgress = 0;
+    draftSaveMessage = 'Saving listing details…';
+    let createdSlug = '';
+    let pendingVersionId = '';
+    let pendingPreviewPaths:string[] = [];
     try {
       const response = await apiRequest<{product:{slug:string}}>('/api/vendor/products', {
         method:'POST',
@@ -219,17 +240,99 @@
           licence:'AssetGuru commercial licence', showcaseVideoUrl:showcaseVideo?.canonicalUrl ?? ''
         })
       });
+      createdSlug = response.product.slug;
+
+      if (packageFile) {
+        const selectedPackage = packageFile;
+        const selectedDocumentation = documentationFile;
+        draftSaveMessage = 'Preparing the private ZIP upload…';
+        const versionResponse = await apiRequest<{versionId:string;uploads:R2BrowserUpload[]}>(`/api/vendor/products/${createdSlug}/versions`, {
+          method:'POST',
+          body:JSON.stringify({
+            version:version.trim() || '1.0.0',
+            releaseNotes:'Initial release saved with private draft.',
+            package:descriptor(selectedPackage),
+            documentation:selectedDocumentation ? descriptor(selectedDocumentation) : undefined
+          })
+        });
+        pendingVersionId = versionResponse.versionId;
+        const loaded = new Map<string,number>();
+        const totalBytes = versionResponse.uploads.reduce((sum, upload) => sum + upload.size, 0);
+        const updateProgress = (role:string, bytes:number) => {
+          loaded.set(role, bytes);
+          uploadProgress = Math.round([...loaded.values()].reduce((sum, value) => sum + value, 0) / Math.max(1, totalBytes) * 100);
+        };
+        for (const upload of versionResponse.uploads) {
+          const file = upload.role === 'package' ? selectedPackage : selectedDocumentation;
+          if (!file) throw new Error(`Missing file for ${upload.role}.`);
+          draftSaveMessage = upload.role === 'package' ? `Uploading ZIP to private R2… ${uploadProgress}%` : `Uploading documentation… ${uploadProgress}%`;
+          await uploadFileToR2(upload, file, (bytes) => updateProgress(upload.role, bytes));
+        }
+        draftSaveMessage = 'Verifying the private ZIP…';
+        await apiRequest(`/api/vendor/products/${createdSlug}/versions`, {
+          method:'PATCH',
+          body:JSON.stringify({ versionId:versionResponse.versionId, packageSize:selectedPackage.size, documentationSize:selectedDocumentation?.size })
+        });
+        pendingVersionId = '';
+      }
+
+      if (previewFiles.length >= 3) {
+        const selectedPreviews = [...previewFiles];
+        draftSaveMessage = 'Preparing preview image uploads…';
+        const previewResponse = await apiRequest<{uploads:SupabaseUpload[]}>(`/api/vendor/products/${createdSlug}/previews`, {
+          method:'POST',
+          body:JSON.stringify({ files:selectedPreviews.map(descriptor) })
+        });
+        pendingPreviewPaths = previewResponse.uploads.map((upload) => upload.path);
+        const supabase = getSupabaseBrowserClient();
+        for (const [index, upload] of previewResponse.uploads.entries()) {
+          const file = selectedPreviews[index];
+          if (!file) throw new Error(`Missing preview image ${index + 1}.`);
+          draftSaveMessage = `Uploading preview ${index + 1} of ${selectedPreviews.length}…`;
+          const { error } = await supabase.storage.from(upload.bucket).uploadToSignedUrl(upload.path, upload.token, file, { contentType:file.type || upload.type });
+          if (error) throw error;
+          uploadProgress = Math.round(((index + 1) / selectedPreviews.length) * 100);
+        }
+        draftSaveMessage = 'Verifying the preview gallery…';
+        await apiRequest(`/api/vendor/products/${createdSlug}/previews`, { method:'PATCH', body:JSON.stringify({ paths:pendingPreviewPaths }) });
+        pendingPreviewPaths = [];
+      }
+
+      draftSaveMessage = 'Confirming the saved private draft…';
       await loadCreatorData(true);
-      const confirmed = get(creatorProducts).some((product) => product.slug === response.product.slug && product.status === 'Draft');
+      const confirmed = get(creatorProducts).find((product) => product.slug === createdSlug && product.status === 'Draft');
       if (!confirmed) throw new Error('The draft was created but could not be confirmed in Creator Products.');
-      if (browser) localStorage.setItem(`assetguru:version-draft:${response.product.slug}`, JSON.stringify({ versionNumber:version, releaseNotes:'' }));
+      if (packageFile) {
+        const stored = await apiRequest<{versions:Array<{verified:boolean}>}>(`/api/vendor/products/${createdSlug}/versions`, { cache:'no-store' });
+        if (!stored.versions.some((item) => item.verified)) throw new Error('The draft was saved, but the private ZIP could not be verified.');
+      }
+      if (previewFiles.length >= 3 && confirmed.images.length < 3) throw new Error('The draft was saved, but the preview gallery could not be confirmed.');
+
+      if (browser) localStorage.setItem(`assetguru:version-draft:${createdSlug}`, JSON.stringify({ versionNumber:version, releaseNotes:'Initial release saved with private draft.' }));
       clearLocalDraft();
-      showToast(`${title.trim()} saved as a private draft.`, 'success');
-      await goto(`/creator/products/${response.product.slug}`);
+      showToast(`${title.trim()} saved privately${packageFile || previewFiles.length ? ' with verified uploads' : ''}.`, 'success');
+      await goto(`/creator/products/${createdSlug}`);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'The draft could not be saved.', 'warning');
+      const message = error instanceof Error ? error.message : 'The private draft could not be completed.';
+      if (createdSlug) {
+        if (pendingVersionId) {
+          try { await apiRequest(`/api/vendor/products/${createdSlug}/versions`, { method:'DELETE', body:JSON.stringify({ versionId:pendingVersionId }) }); }
+          catch (cleanupError) { console.error('Pending R2 upload cleanup failed', cleanupError); }
+        }
+        if (pendingPreviewPaths.length) {
+          try { await apiRequest(`/api/vendor/products/${createdSlug}/previews`, { method:'DELETE', body:JSON.stringify({ paths:pendingPreviewPaths }) }); }
+          catch (cleanupError) { console.error('Pending preview cleanup failed', cleanupError); }
+        }
+        await loadCreatorData(true);
+        clearLocalDraft();
+        showToast(`${message} The listing details remain saved as a private draft.`, 'warning');
+        await goto(`/creator/products/${createdSlug}${packageFile ? '?tab=files' : previewFiles.length ? '?tab=presentation' : ''}`);
+      } else {
+        showToast(message, 'warning');
+      }
     } finally {
       draftSaving = false;
+      draftSaveMessage = '';
     }
   }
 
@@ -321,7 +424,7 @@
 <header class="upload-head">
   <a href="/creator/products">← Exit new asset</a>
   <div><span class="eyebrow">Creator workflow rebuild</span><h1>Create a <span class="gradient-text">new asset.</span></h1><p>Build the listing section by section, save it privately at any time, then submit it to the administrator for review.</p></div>
-  <button class="button button-secondary" type="button" disabled={draftSaving || submitting} onclick={saveDraft}><Icon name="list" size={17}/>{draftSaving ? 'Saving…' : 'Save private draft'}</button>
+  <button class="button button-secondary" type="button" disabled={draftSaving || submitting} onclick={saveDraft}><Icon name="list" size={17}/>{draftSaving ? (draftSaveMessage || 'Saving…') : 'Save private draft'}</button>
 </header>
 
 <div class="taxonomy-note glass"><Icon name="grid" size={20}/><span><b>{CATEGORY_COUNT} categories · {SUBCATEGORY_COUNT} subcategories restored</b><small>The agreed AssetGuru taxonomy is used for creator forms, moderation and marketplace discovery.</small></span></div>
@@ -336,7 +439,7 @@
 </nav>
 
 <div class="workflow-layout">
-  <main oninput={scheduleLocalSave} onchange={scheduleLocalSave}>
+  <main bind:this={workflowMain} oninput={scheduleLocalSave} onchange={scheduleLocalSave}>
     {#if step === 1}
       <section class="panel glass">
         <div class="panel-title"><span>01</span><div><h2>Overview and discovery</h2><p>Use clear buyer-facing language and place the asset in the correct category.</p></div></div>
@@ -389,15 +492,15 @@
       </section>
     {/if}
 
-    <div class="footer-actions"><button class="button button-secondary" type="button" disabled={step === 1 || submitting} onclick={back}>← Previous</button>{#if step < 5}<button class="button button-primary" type="button" disabled={!canContinue || submitting} onclick={next}>Continue →</button>{:else}<button class="button button-primary" type="button" disabled={!canSubmit || submitting || draftSaving} onclick={submitReview}><Icon name="shield" size={18}/>{submitting ? `Uploading ${uploadProgress}%` : 'Submit for admin review'}</button>{/if}</div>
+    <div class="footer-actions"><button class="button button-secondary" type="button" disabled={step === 1 || submitting || draftSaving} onclick={back}>← Previous</button>{#if step < 5}<button class="button button-primary" type="button" disabled={!canContinue || submitting || draftSaving} onclick={next}>Continue →</button>{/if}</div>
   </main>
 
   <aside>
     <section class="health-card glass"><span class="eyebrow">Submission readiness</span><div class="ring" style={`--score:${completionPercent * 3.6}deg`}><b>{completionPercent}</b><small>%</small></div><h3>{canSubmit ? 'Ready to submit' : `${missingChecks.length} item${missingChecks.length === 1 ? '' : 's'} remaining`}</h3><p>Your entered text is automatically retained in this browser until a server draft is created.</p><ul>{#each checks as item}<li class:done={item.done}><button type="button" onclick={() => jumpTo(item.tab)}><Icon name={item.done ? 'check' : 'plus'} size={15}/>{item.label}</button></li>{/each}</ul></section>
-    <section class="action-card glass"><h3>Product actions</h3><button class="button button-secondary" type="button" disabled={draftSaving || submitting} onclick={saveDraft}>{draftSaving ? 'Saving private draft…' : 'Save private draft'}</button><button class="button button-primary" type="button" disabled={!canSubmit || submitting || draftSaving} onclick={submitReview}>{submitting ? `Uploading ${uploadProgress}%` : 'Submit for admin review'}</button>{#if missingChecks.length}<p>Next required item: <b>{missingChecks[0].label}</b></p>{/if}</section>
+    <section class="action-card glass"><h3>Product actions</h3><button class="button button-secondary" type="button" disabled={draftSaving || submitting} onclick={saveDraft}>{draftSaving ? (draftSaveMessage || 'Saving private draft…') : 'Save private draft'}</button><button class="button button-primary" type="button" disabled={!canSubmit || submitting || draftSaving} onclick={submitReview}>{submitting ? `Uploading ${uploadProgress}%` : 'Submit for admin review'}</button>{#if missingChecks.length}<p>Next required item: <b>{missingChecks[0].label}</b></p>{/if}</section>
   </aside>
 </div>
 
 <style>
-  .visually-hidden{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}.maintenance-note,.recovery-note,.taxonomy-note{margin-bottom:16px;padding:15px 17px;display:flex;align-items:center;gap:13px;border:1px solid #23496d;border-radius:12px;color:#00e5ff}.maintenance-note{color:#ffb547;border-color:rgba(255,181,71,.4)}.recovery-note{color:#24d89a;border-color:rgba(36,216,154,.4)}.maintenance-note span,.recovery-note span,.taxonomy-note span{display:grid;gap:4px;flex:1}.maintenance-note b,.recovery-note b,.taxonomy-note b{color:#f5f8ff;font-size:14px}.maintenance-note small,.recovery-note small,.taxonomy-note small{color:#9fb0c6;font-size:12px}.recovery-note button{padding:9px 12px;border:1px solid currentColor;border-radius:8px;color:inherit;background:transparent;cursor:pointer;font-weight:800}.upload-head{margin-bottom:18px;display:grid;grid-template-columns:1fr minmax(0,4fr) auto;gap:22px;align-items:center}.upload-head>a{color:#a9b8cd;font-size:13px}.upload-head h1{margin:7px 0 8px;font-size:clamp(2.2rem,4vw,4.5rem);letter-spacing:-.06em}.upload-head p{max-width:760px;margin:0;color:#aebbd0;font-size:14px;line-height:1.6}.stepper{margin-bottom:18px;padding:8px;display:grid;grid-template-columns:repeat(5,1fr);gap:7px}.stepper button{min-height:68px;padding:10px 12px;display:flex;align-items:center;gap:10px;border:1px solid transparent;border-radius:10px;color:#8fa3bd;background:transparent;cursor:pointer;text-align:left}.stepper button:hover,.stepper button.active{border-color:#2a5a80;color:#fff;background:rgba(0,229,255,.06)}.stepper button.complete{color:#24d89a}.stepper i{width:32px;height:32px;display:grid;place-items:center;border:1px solid currentColor;border-radius:50%;font-size:12px;font-style:normal;font-weight:900}.stepper span{display:grid;gap:3px}.stepper b{font-size:13px}.stepper small{font-size:11px}.workflow-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start}.workflow-layout main{min-width:0}.panel{padding:26px}.panel-title{margin-bottom:24px;display:flex;align-items:flex-start;gap:15px}.panel-title>span{width:45px;height:45px;display:grid;place-items:center;flex:0 0 auto;border:1px solid #2d678e;border-radius:12px;color:#00e5ff;background:#071225;font-size:13px;font-weight:950}.panel-title>div{flex:1}.panel-title h2{margin:0;color:#f5f8ff;font-size:26px}.panel-title p{margin:7px 0 0;color:#aebbd0;font-size:14px;line-height:1.55}.panel-title>strong{padding:8px 11px;border:1px solid #2d678e;border-radius:9px;color:#00e5ff;font-size:12px}.panel label{margin-bottom:18px;display:grid;gap:9px;color:#d9e3f0;font-size:14px;font-weight:850}.panel label em{color:#ffc857;font-size:12px;font-style:normal}.panel label>span{color:#9fb0c6;font-size:12px;font-weight:600}.panel input,.panel select,.panel textarea{width:100%;padding:0 14px;border:1px solid #27547a;border-radius:10px;color:#fff;background:#030a14;font:inherit;font-size:16px}.panel input,.panel select{min-height:50px}.panel textarea{padding-block:13px;line-height:1.6;resize:vertical}.panel input::placeholder,.panel textarea::placeholder{color:#72849d}.panel label small{color:#9fb0c6;font-size:12px;font-weight:500}.two,.licence-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.inline-status{margin:0 0 18px;padding:13px 14px;display:flex;align-items:center;gap:11px;border:1px solid #28577c;border-radius:10px;color:#00e5ff;background:rgba(0,229,255,.045)}.inline-status.warning{color:#ffb547;border-color:rgba(255,181,71,.4);background:rgba(255,181,71,.05)}.inline-status span{display:grid;gap:4px;flex:1}.inline-status b{color:#f5f8ff;font-size:13px}.inline-status small{color:#aebbd0;font-size:12px}.inline-status button{padding:8px 11px;border:1px solid currentColor;border-radius:7px;color:inherit;background:transparent;cursor:pointer}.package-dropzone{width:100%;min-height:285px;padding:34px;display:grid;place-items:center;align-content:center;gap:10px;border:2px dashed #2d678e;border-radius:18px;color:#00e5ff;background:radial-gradient(circle at 50% 22%,rgba(0,229,255,.14),transparent 20rem),#030a14;cursor:pointer;text-align:center}.package-dropzone:hover,.package-dropzone.dragging{border-color:#00e5ff;background:radial-gradient(circle at 50% 22%,rgba(0,229,255,.22),transparent 20rem),#04101d}.package-dropzone.selected{border-style:solid;border-color:rgba(36,216,154,.7);color:#24d89a;background:radial-gradient(circle at 50% 22%,rgba(36,216,154,.16),transparent 20rem),#04110f}.package-dropzone .folder{width:96px;height:82px;display:grid;place-items:center;border:1px solid currentColor;border-radius:20px;background:rgba(0,229,255,.07)}.package-dropzone small{font-size:11px;font-weight:950;letter-spacing:.14em}.package-dropzone>b{max-width:760px;overflow-wrap:anywhere;color:#fff;font-size:26px}.package-dropzone em{color:#aebbd0;font-size:15px;font-style:normal}.package-dropzone .choose{padding:11px 17px;border:1px solid currentColor;border-radius:9px;color:#03121b;background:#00e5ff;font-size:14px;font-weight:950}.package-dropzone.selected .choose{color:#04130e;background:#24d89a}.file-note{margin:10px 0 20px;color:#9fb0c6;font-size:12px;line-height:1.6;text-align:center}.checkbox{padding:15px!important;grid-template-columns:auto 1fr!important;align-items:start;border:1px solid #23496d;border-radius:11px;background:#06101e}.checkbox input{width:18px!important;min-height:18px!important;margin-top:2px;padding:0!important;accent-color:#00e5ff}.checkbox span{display:grid;gap:4px!important}.checkbox b{color:#f5f8ff;font-size:14px}.document-picker{margin-bottom:18px;padding:16px;display:grid;grid-template-columns:auto 1fr auto;gap:13px;align-items:center;border:1px dashed #2d678e;border-radius:12px;color:#8b5cf6;background:#06101e}.document-picker.complete{border-style:solid;border-color:rgba(36,216,154,.55);color:#24d89a}.document-picker span{display:grid;gap:4px}.document-picker b{overflow:hidden;color:#f5f8ff;font-size:14px;text-overflow:ellipsis;white-space:nowrap}.document-picker small{color:#9fb0c6;font-size:12px}.document-picker button{min-height:42px;padding:0 14px;border:1px solid currentColor;border-radius:8px;color:inherit;background:transparent;cursor:pointer;font-size:13px;font-weight:850}.video-field{margin:22px 0;padding:18px;border:1px solid #23496d;border-radius:12px;background:#06101e}.video-field iframe{width:100%;margin-top:14px;aspect-ratio:16/9;border:0;border-radius:10px}.licence-grid label{padding:18px;border:1px solid #23496d;border-radius:12px;background:#06101e}.licence-grid label>span{color:#f5f8ff;font-size:15px;font-weight:900}.money{display:flex;align-items:center;border:1px solid #2d678e;border-radius:10px;background:#030a14}.money b{padding-left:14px;color:#00e5ff;font-size:20px}.money input{border:0;background:transparent;font-size:23px;font-weight:900}.review-card{margin-bottom:18px;padding:22px;border:1px solid #2d678e;border-radius:14px;background:linear-gradient(135deg,rgba(0,229,255,.07),transparent 45%),#050d18}.review-card>span{color:#00e5ff;font-size:11px;font-weight:950;letter-spacing:.14em}.review-card h2{margin:10px 0 7px;font-size:25px}.review-card p{margin:0;color:#aebbd0;font-size:14px;line-height:1.6}.review-card>div{margin-top:18px;display:flex;align-items:baseline;justify-content:space-between;gap:14px}.review-card>div b{font-size:25px}.review-card>div small{color:#9fb0c6;font-size:12px}.checklist{margin-bottom:18px;display:grid;border:1px solid #23496d;border-radius:12px;overflow:hidden}.checklist button{min-height:48px;padding:0 13px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;border:0;border-bottom:1px solid #183352;color:#ffb547;background:#06101e;cursor:pointer;text-align:left}.checklist button:last-child{border-bottom:0}.checklist button.done{color:#24d89a}.checklist span{color:#d8e3f0;font-size:13px}.checklist b{font-size:11px}.agreement{padding:16px!important;grid-template-columns:auto 1fr!important;align-items:start;border:1px solid #2d678e;border-radius:11px;line-height:1.6}.agreement input{width:18px!important;min-height:18px!important;margin-top:2px;padding:0!important;accent-color:#00e5ff}.upload-state{padding:15px;display:grid;grid-template-columns:auto 1fr;gap:11px;align-items:center;border:1px solid rgba(0,229,255,.4);border-radius:11px;color:#00e5ff;background:rgba(0,229,255,.05)}.upload-state span{display:grid;gap:4px}.upload-state b{color:#f5f8ff;font-size:14px}.upload-state small{color:#9fb0c6;font-size:12px}.upload-state>div{grid-column:1/-1;height:7px;overflow:hidden;border-radius:99px;background:#10253a}.upload-state i{height:100%;display:block;background:linear-gradient(90deg,#00e5ff,#8b5cf6)}.footer-actions{margin-top:14px;display:flex;justify-content:space-between;gap:12px}.workflow-layout aside{display:grid;gap:14px;position:sticky;top:18px}.health-card,.action-card{padding:18px}.ring{--score:0deg;width:105px;height:105px;margin:18px auto 12px;display:grid;place-items:center;align-content:center;border-radius:50%;background:conic-gradient(#00e5ff var(--score),#142b45 0);position:relative}.ring:after{content:'';position:absolute;inset:8px;border-radius:50%;background:#071225}.ring b,.ring small{position:relative;z-index:1}.ring b{font-size:27px}.ring small{color:#9fb0c6;font-size:11px}.health-card h3{text-align:center}.health-card>p{color:#9fb0c6;font-size:12px;line-height:1.6;text-align:center}.health-card ul{padding:0;list-style:none}.health-card li{border-top:1px solid #183352}.health-card li button{width:100%;min-height:42px;padding:0;display:flex;align-items:center;gap:8px;border:0;color:#9fb0c6;background:transparent;cursor:pointer;text-align:left;font-size:12px}.health-card li.done button{color:#24d89a}.action-card{display:grid;gap:10px}.action-card h3{margin:0 0 4px}.action-card p{margin:3px 0 0;color:#9fb0c6;font-size:12px;line-height:1.5}.action-card p b{color:#f5f8ff}.button:disabled{opacity:.45;cursor:not-allowed;transform:none}@media(max-width:1050px){.workflow-layout{grid-template-columns:1fr}.workflow-layout aside{position:static;grid-template-columns:1fr 1fr}.stepper{grid-template-columns:repeat(3,1fr)}.upload-head{grid-template-columns:1fr}.upload-head .button{width:max-content}}@media(max-width:700px){.two,.licence-grid,.workflow-layout aside{grid-template-columns:1fr}.stepper{grid-template-columns:1fr 1fr}.panel{padding:20px}.upload-head .button,.footer-actions .button{width:100%}.footer-actions{display:grid}.document-picker{grid-template-columns:auto 1fr}.document-picker button{grid-column:1/-1}.review-card>div{align-items:flex-start;flex-direction:column}.recovery-note{align-items:flex-start;flex-wrap:wrap}.recovery-note button{width:100%}}@media(max-width:480px){.stepper{grid-template-columns:1fr}.panel-title{flex-wrap:wrap}.package-dropzone{min-height:250px;padding:24px}.package-dropzone>b{font-size:22px}}
+  .visually-hidden{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}.maintenance-note,.recovery-note,.taxonomy-note{margin-bottom:16px;padding:15px 17px;display:flex;align-items:center;gap:13px;border:1px solid #23496d;border-radius:12px;color:#00e5ff}.maintenance-note{color:#ffb547;border-color:rgba(255,181,71,.4)}.recovery-note{color:#24d89a;border-color:rgba(36,216,154,.4)}.maintenance-note span,.recovery-note span,.taxonomy-note span{display:grid;gap:4px;flex:1}.maintenance-note b,.recovery-note b,.taxonomy-note b{color:#f5f8ff;font-size:14px}.maintenance-note small,.recovery-note small,.taxonomy-note small{color:#9fb0c6;font-size:12px}.recovery-note button{padding:9px 12px;border:1px solid currentColor;border-radius:8px;color:inherit;background:transparent;cursor:pointer;font-weight:800}.upload-head{margin-bottom:18px;display:grid;grid-template-columns:1fr minmax(0,4fr) auto;gap:22px;align-items:center}.upload-head>a{color:#a9b8cd;font-size:13px}.upload-head h1{margin:7px 0 8px;font-size:clamp(2.2rem,4vw,4.5rem);letter-spacing:-.06em}.upload-head p{max-width:760px;margin:0;color:#aebbd0;font-size:14px;line-height:1.6}.stepper{margin-bottom:18px;padding:8px;display:grid;grid-template-columns:repeat(5,1fr);gap:7px}.stepper button{min-height:68px;padding:10px 12px;display:flex;align-items:center;gap:10px;border:1px solid transparent;border-radius:10px;color:#8fa3bd;background:transparent;cursor:pointer;text-align:left}.stepper button:hover,.stepper button.active{border-color:#2a5a80;color:#fff;background:rgba(0,229,255,.06)}.stepper button.complete{color:#24d89a}.stepper i{width:32px;height:32px;display:grid;place-items:center;border:1px solid currentColor;border-radius:50%;font-size:12px;font-style:normal;font-weight:900}.stepper span{display:grid;gap:3px}.stepper b{font-size:13px}.stepper small{font-size:11px}.workflow-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start}.workflow-layout main{min-width:0}.panel{padding:26px}.panel-title{margin-bottom:24px;display:flex;align-items:flex-start;gap:15px}.panel-title>span{width:45px;height:45px;display:grid;place-items:center;flex:0 0 auto;border:1px solid #2d678e;border-radius:12px;color:#00e5ff;background:#071225;font-size:13px;font-weight:950}.panel-title>div{flex:1}.panel-title h2{margin:0;color:#f5f8ff;font-size:26px}.panel-title p{margin:7px 0 0;color:#aebbd0;font-size:14px;line-height:1.55}.panel-title>strong{padding:8px 11px;border:1px solid #2d678e;border-radius:9px;color:#00e5ff;font-size:12px}.panel label{margin-bottom:18px;display:grid;gap:9px;color:#d9e3f0;font-size:14px;font-weight:850}.panel label em{color:#ffc857;font-size:12px;font-style:normal}.panel label>span{color:#9fb0c6;font-size:12px;font-weight:600}.panel input,.panel select,.panel textarea{width:100%;padding:0 14px;border:1px solid #27547a;border-radius:10px;color:#fff;background:#030a14;font:inherit;font-size:16px}.panel input,.panel select{min-height:50px}.panel textarea{padding-block:13px;line-height:1.6;resize:vertical}.panel input::placeholder,.panel textarea::placeholder{color:#72849d}.panel label small{color:#9fb0c6;font-size:12px;font-weight:500}.two,.licence-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.inline-status{margin:0 0 18px;padding:13px 14px;display:flex;align-items:center;gap:11px;border:1px solid #28577c;border-radius:10px;color:#00e5ff;background:rgba(0,229,255,.045)}.inline-status.warning{color:#ffb547;border-color:rgba(255,181,71,.4);background:rgba(255,181,71,.05)}.inline-status span{display:grid;gap:4px;flex:1}.inline-status b{color:#f5f8ff;font-size:13px}.inline-status small{color:#aebbd0;font-size:12px}.inline-status button{padding:8px 11px;border:1px solid currentColor;border-radius:7px;color:inherit;background:transparent;cursor:pointer}.package-dropzone{width:100%;min-height:285px;padding:34px;display:grid;place-items:center;align-content:center;gap:10px;border:2px dashed #2d678e;border-radius:18px;color:#00e5ff;background:radial-gradient(circle at 50% 22%,rgba(0,229,255,.14),transparent 20rem),#030a14;cursor:pointer;text-align:center}.package-dropzone:hover,.package-dropzone.dragging{border-color:#00e5ff;background:radial-gradient(circle at 50% 22%,rgba(0,229,255,.22),transparent 20rem),#04101d}.package-dropzone.selected{border-style:solid;border-color:rgba(36,216,154,.7);color:#24d89a;background:radial-gradient(circle at 50% 22%,rgba(36,216,154,.16),transparent 20rem),#04110f}.package-dropzone .folder{width:96px;height:82px;display:grid;place-items:center;border:1px solid currentColor;border-radius:20px;background:rgba(0,229,255,.07)}.package-dropzone small{font-size:11px;font-weight:950;letter-spacing:.14em}.package-dropzone>b{max-width:760px;overflow-wrap:anywhere;color:#fff;font-size:26px}.package-dropzone em{color:#aebbd0;font-size:15px;font-style:normal}.package-dropzone .choose{padding:11px 17px;border:1px solid currentColor;border-radius:9px;color:#03121b;background:#00e5ff;font-size:14px;font-weight:950}.package-dropzone.selected .choose{color:#04130e;background:#24d89a}.file-note{margin:10px 0 20px;color:#9fb0c6;font-size:12px;line-height:1.6;text-align:center}.checkbox{padding:15px!important;grid-template-columns:auto 1fr!important;align-items:start;border:1px solid #23496d;border-radius:11px;background:#06101e}.checkbox input{width:18px!important;min-height:18px!important;margin-top:2px;padding:0!important;accent-color:#00e5ff}.checkbox span{display:grid;gap:4px!important}.checkbox b{color:#f5f8ff;font-size:14px}.document-picker{margin-bottom:18px;padding:16px;display:grid;grid-template-columns:auto 1fr auto;gap:13px;align-items:center;border:1px dashed #2d678e;border-radius:12px;color:#8b5cf6;background:#06101e}.document-picker.complete{border-style:solid;border-color:rgba(36,216,154,.55);color:#24d89a}.document-picker span{display:grid;gap:4px}.document-picker b{overflow:hidden;color:#f5f8ff;font-size:14px;text-overflow:ellipsis;white-space:nowrap}.document-picker small{color:#9fb0c6;font-size:12px}.document-picker button{min-height:42px;padding:0 14px;border:1px solid currentColor;border-radius:8px;color:inherit;background:transparent;cursor:pointer;font-size:13px;font-weight:850}.video-field{margin:22px 0;padding:18px;border:1px solid #23496d;border-radius:12px;background:#06101e}.video-field iframe{width:100%;margin-top:14px;aspect-ratio:16/9;border:0;border-radius:10px}.licence-grid label{padding:18px;border:1px solid #23496d;border-radius:12px;background:#06101e}.licence-grid label>span{color:#f5f8ff;font-size:15px;font-weight:900}.money{display:flex;align-items:center;border:1px solid #2d678e;border-radius:10px;background:#030a14}.money b{padding-left:14px;color:#00e5ff;font-size:20px}.money input{border:0;background:transparent;font-size:23px;font-weight:900}.review-card{margin-bottom:18px;padding:22px;border:1px solid #2d678e;border-radius:14px;background:linear-gradient(135deg,rgba(0,229,255,.07),transparent 45%),#050d18}.review-card>span{color:#00e5ff;font-size:11px;font-weight:950;letter-spacing:.14em}.review-card h2{margin:10px 0 7px;font-size:25px}.review-card p{margin:0;color:#aebbd0;font-size:14px;line-height:1.6}.review-card>div{margin-top:18px;display:flex;align-items:baseline;justify-content:space-between;gap:14px}.review-card>div b{font-size:25px}.review-card>div small{color:#9fb0c6;font-size:12px}.checklist{margin-bottom:18px;display:grid;border:1px solid #23496d;border-radius:12px;overflow:hidden}.checklist button{min-height:48px;padding:0 13px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;border:0;border-bottom:1px solid #183352;color:#ffb547;background:#06101e;cursor:pointer;text-align:left}.checklist button:last-child{border-bottom:0}.checklist button.done{color:#24d89a}.checklist span{color:#d8e3f0;font-size:13px}.checklist b{font-size:11px}.agreement{padding:16px!important;grid-template-columns:auto 1fr!important;align-items:start;border:1px solid #2d678e;border-radius:11px;line-height:1.6}.agreement input{width:18px!important;min-height:18px!important;margin-top:2px;padding:0!important;accent-color:#00e5ff}.upload-state{padding:15px;display:grid;grid-template-columns:auto 1fr;gap:11px;align-items:center;border:1px solid rgba(0,229,255,.4);border-radius:11px;color:#00e5ff;background:rgba(0,229,255,.05)}.upload-state span{display:grid;gap:4px}.upload-state b{color:#f5f8ff;font-size:14px}.upload-state small{color:#9fb0c6;font-size:12px}.upload-state>div{grid-column:1/-1;height:7px;overflow:hidden;border-radius:99px;background:#10253a}.upload-state i{height:100%;display:block;background:linear-gradient(90deg,#00e5ff,#8b5cf6)}.footer-actions{margin-top:14px;display:flex;justify-content:space-between;gap:12px}.workflow-layout aside{display:grid;gap:14px;position:sticky;top:18px}.health-card,.action-card{padding:18px}.ring{--score:0deg;width:105px;height:105px;margin:18px auto 12px;display:grid;place-items:center;align-content:center;border-radius:50%;background:conic-gradient(#00e5ff var(--score),#142b45 0);position:relative}.ring:after{content:'';position:absolute;inset:8px;border-radius:50%;background:#071225}.ring b,.ring small{position:relative;z-index:1}.ring b{font-size:27px}.ring small{color:#9fb0c6;font-size:11px}.health-card h3{text-align:center}.health-card>p{color:#9fb0c6;font-size:12px;line-height:1.6;text-align:center}.health-card ul{padding:0;list-style:none}.health-card li{border-top:1px solid #183352}.health-card li button{width:100%;min-height:42px;padding:0;display:flex;align-items:center;gap:8px;border:0;color:#9fb0c6;background:transparent;cursor:pointer;text-align:left;font-size:12px}.health-card li.done button{color:#24d89a}.action-card{display:grid;gap:10px}.action-card h3{margin:0 0 4px}.action-card p{margin:3px 0 0;color:#9fb0c6;font-size:12px;line-height:1.5}.action-card p b{color:#f5f8ff}.button:disabled{opacity:.45;cursor:not-allowed;transform:none}.action-card .button-primary:disabled{opacity:1;border-color:#28435e;color:#6f8198;background:#14243a;box-shadow:none}@media(max-width:1050px){.workflow-layout{grid-template-columns:1fr}.workflow-layout aside{position:static;grid-template-columns:1fr 1fr}.stepper{grid-template-columns:repeat(3,1fr)}.upload-head{grid-template-columns:1fr}.upload-head .button{width:max-content}}@media(max-width:700px){.two,.licence-grid,.workflow-layout aside{grid-template-columns:1fr}.stepper{grid-template-columns:1fr 1fr}.panel{padding:20px}.upload-head .button,.footer-actions .button{width:100%}.footer-actions{display:grid}.document-picker{grid-template-columns:auto 1fr}.document-picker button{grid-column:1/-1}.review-card>div{align-items:flex-start;flex-direction:column}.recovery-note{align-items:flex-start;flex-wrap:wrap}.recovery-note button{width:100%}}@media(max-width:480px){.stepper{grid-template-columns:1fr}.panel-title{flex-wrap:wrap}.package-dropzone{min-height:250px;padding:24px}.package-dropzone>b{font-size:22px}}
 </style>
